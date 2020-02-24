@@ -1,0 +1,3 @@
+// The configured options and settings for jsondotrulo.
+#define jsondotrulo_VERSION_MAJOR @jsondotrulo_VERSION_MAJOR@
+#define jsondotrulo_VERSION_MINOR @jsondotrulo_VERSION_MINOR@
