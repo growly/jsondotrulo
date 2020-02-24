@@ -1,12 +1,12 @@
-## jsondotrulo
+# jsondotrulo
 
 Converts the .json output by Yosys to DOT-format graph descriptions.
 
-# Init
+### Init
 
 `git submodule update --init --recursive`
 
-# Build
+### Build
 
 * have cmake
 
@@ -16,13 +16,13 @@ cmake ../
 make -j $(nproc)
 ```
 
-# Running
+### Running
 
 ```
 build/jsondotrulo yosys_output.json > yosys_output.gv
 ```
 
-# Using graphviz
+### Using graphviz
 
 Do something like
 
@@ -31,6 +31,6 @@ neato -Tps -Goverlap="scale" yosys_output.gv -o yosys_output.ps
 okular yosys_output.ps &
 ```
 
-# Tests
+### Tests
 
 hahaha
