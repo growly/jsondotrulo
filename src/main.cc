@@ -108,12 +108,12 @@ int main(int argc, char **argv) {
       if (!FLAGS_dot_file.empty()) {
         std::string file_name = FLAGS_dot_file + "." + g.name() + ".gv";
         std::cout << g.name() << ": wrote " << file_name << std::endl;
-        WriteFile(FLAGS_dot_file, g.AsDOT());
+        WriteFile(file_name, g.AsDOT());
       }
       if (!FLAGS_m_file.empty()) {
         std::string file_name = FLAGS_m_file + "." + g.name() + ".m";
         std::cout << g.name() << ": wrote " << file_name << std::endl;
-        WriteFile(FLAGS_m_file, g.AsMFile());
+        WriteFile(file_name, g.AsMFile());
       }
     }
   }
