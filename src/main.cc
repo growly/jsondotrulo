@@ -11,13 +11,29 @@
 #include "vertex.h"
 #include "edge.h"
 
+#include <gflags/gflags.h>
 #include <nlohmann/json.hpp>
+
+DEFINE_string(dot_file, "",
+              "Path prefix to DOT-format output file. If empty, no DOT output "
+              "will be provided.");
+DEFINE_string(m_file, "",
+              "Path prefix to MATLAB m-file output. If empty, no MATLAB output "
+              "will be provided.");
+
+void WriteFile(const std::string &file_name, const std::string &content) {
+  std::ofstream out_file;
+  out_file.open(file_name, std::ios::out | std::ios::trunc);
+  out_file << content;
+  out_file.close();
+}
 
 int main(int argc, char **argv) {
   if (argc < 2) {
     std::cout << argv[0] << " Version " <<  jsondotrulo_VERSION_MAJOR << "."
               << jsondotrulo_VERSION_MINOR << std::endl;
   }
+  gflags::ParseCommandLineFlags(&argc, &argv, true);
 
   // Read json file.
   std::ifstream i(argv[1]);
@@ -88,7 +104,17 @@ int main(int argc, char **argv) {
         g.AddInputEdges(in_ports);
         g.AddOutputEdges(out_ports);
       }
-      g.WriteDOT();
+      // Graph object should now be complete. Write different formats:
+      if (!FLAGS_dot_file.empty()) {
+        std::string file_name = FLAGS_dot_file + "." + g.name() + ".gv";
+        std::cout << g.name() << ": wrote " << file_name << std::endl;
+        WriteFile(FLAGS_dot_file, g.AsDOT());
+      }
+      if (!FLAGS_m_file.empty()) {
+        std::string file_name = FLAGS_m_file + "." + g.name() + ".m";
+        std::cout << g.name() << ": wrote " << file_name << std::endl;
+        WriteFile(FLAGS_m_file, g.AsMFile());
+      }
     }
   }
 

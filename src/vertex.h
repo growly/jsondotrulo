@@ -8,6 +8,7 @@ struct Edge;
 // This abstractly represents an vertex in the circuit.
 struct Vertex {
   std::string name;
+  size_t index;
   std::vector<Edge*> in;
   Edge* out;
   double weight;

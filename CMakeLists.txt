@@ -17,6 +17,7 @@ target_include_directories(jsondotrulo PUBLIC
                            )
 
 target_link_libraries(jsondotrulo PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(jsondotrulo PUBLIC gflags::gflags)
 
 
 set(CMAKE_CXX_STANDARD 11)
