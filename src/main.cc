@@ -20,12 +20,35 @@ DEFINE_string(dot_file, "",
 DEFINE_string(m_file, "",
               "Path prefix to MATLAB m-file output. If empty, no MATLAB output "
               "will be provided.");
+DEFINE_string(hmetis_file, "",
+              "Path prefix to hMETIS input file to write. If empty, no MATLAB"
+              " output will be provided.");
+DEFINE_bool(print, false, "Print details about the module graph.");
+
+// TODO(aryap): The ordering has to be deterministic between runs if we're just
+// going to ingest this metadata like this:
+DEFINE_string(hmetis_partition_file, "",
+              "Path to hMETIS-output partition file, containing a partition "
+              "number per line, indicating the allocating partition number "
+              "for the hyperedge of the same number");
+
+DEFINE_string(top, "", "Name of the top verilog module.");
 
 void WriteFile(const std::string &file_name, const std::string &content) {
   std::ofstream out_file;
   out_file.open(file_name, std::ios::out | std::ios::trunc);
   out_file << content;
   out_file.close();
+}
+
+std::string ReadFile(const std::string &file_name) {
+  std::ifstream in_file;
+  in_file.open(file_name, std::ios::in);
+  // This double-parantheses crap circumvents the "most vexing parse" problem.
+  std::string content((std::istreambuf_iterator<char>(in_file)),
+                       std::istreambuf_iterator<char>());
+  in_file.close();
+  return content;
 }
 
 int main(int argc, char **argv) {
@@ -104,6 +127,18 @@ int main(int argc, char **argv) {
         g.AddInputEdges(in_ports);
         g.AddOutputEdges(out_ports);
       }
+      // TODO(aryap): REMOVE THIS HACK!
+      if (g.name() != FLAGS_top) {
+        continue;
+      }
+      if (!FLAGS_hmetis_partition_file.empty()) {
+        std::cout << g.name() << ": adding partition data from hMETIS file "
+                  << FLAGS_hmetis_partition_file << std::endl;
+        g.ReadHMETISPartitions(ReadFile(FLAGS_hmetis_partition_file));
+      }
+      if (FLAGS_print) {
+        g.Print();
+      }
       // Graph object should now be complete. Write different formats:
       if (!FLAGS_dot_file.empty()) {
         std::string file_name = FLAGS_dot_file + "." + g.name() + ".gv";
@@ -114,6 +149,11 @@ int main(int argc, char **argv) {
         std::string file_name = FLAGS_m_file + "." + g.name() + ".m";
         std::cout << g.name() << ": wrote " << file_name << std::endl;
         WriteFile(file_name, g.AsMFile());
+      }
+      if (!FLAGS_hmetis_file.empty()) {
+        std::string file_name = FLAGS_hmetis_file + "." + g.name() + ".hmetis";
+        std::cout << g.name() << ": wrote " << file_name << std::endl;
+        WriteFile(file_name, g.AsHMETIS());
       }
     }
   }

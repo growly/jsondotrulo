@@ -9,6 +9,7 @@ struct Edge;
 struct Vertex {
   std::string name;
   size_t index;
+  int partition;  // -1 means no partition.
   std::vector<Edge*> in;
   Edge* out;
   double weight;
