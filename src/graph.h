@@ -7,10 +7,11 @@
 #include <unordered_map>
 #include <vector>
 
+#include "edge.h"
+#include "vertex.h"
+
 namespace jsondotrulo {
 
-class Edge;
-class Vertex;
 
 // This abstractly represents a self-contained graph, i.e. a model.
 // TODO(aryap): This owns its child objects and must delete them.
@@ -24,8 +25,14 @@ class Graph {
   void AddOutputEdges(const std::vector<std::string> &output_edge_names);
 
   void AddVertex(
+      const VertexType &type,
       const std::vector<std::string> &input_edge_names,
       const std::string &output_edge_name);
+
+  // Finds all paths between synchronous elements (flip flops). Assigns weights
+  // accordingly, I guess. TODO(aryap): Find the right weight-assignment
+  // scheme.
+  void WeightCombinatorialPaths() ;
 
   void Print() const;
 
@@ -35,6 +42,11 @@ class Graph {
 
   std::string AsHMETIS() const;
 
+  // TODO(aryap): Verify this actually works.
+  std::string AsGraph6() const;
+
+  std::string AsEdgeListWithWeights() const;
+
   // Read parition information from an hMETIS-format partition file. It is
   // assumed that the hyperedge indices in the file correspond to those read
   // into this graph.
@@ -43,6 +55,8 @@ class Graph {
   const std::string &name() const { return name_; }
 
  private:
+  static double ApproximateCost(const std::vector<Vertex*> &path);
+
   Edge *FindOrCreateEdge(const std::string &name);
 
   std::string name_;

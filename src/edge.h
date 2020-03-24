@@ -10,6 +10,7 @@ class Vertex;
 // This abstractly represents an edge in the circuit. It's a net.
 struct Edge {
   std::string name;
+  double weight;
   size_t index;
   int partition;  // -1 means no partition.
   std::set<Vertex*> in;

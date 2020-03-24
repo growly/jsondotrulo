@@ -23,6 +23,12 @@ DEFINE_string(m_file, "",
 DEFINE_string(hmetis_file, "",
               "Path prefix to hMETIS input file to write. If empty, no MATLAB"
               " output will be provided.");
+DEFINE_string(graph6_file, "",
+              "Path to prefix to Graph6 file to write. If empty, no Graph6 "
+              " output will be provided.");
+DEFINE_string(edge_list, "",
+              "Path to prefix for edge-list file to write. If empty, no"
+              " edge-list output will be provided.");
 DEFINE_bool(print, false, "Print details about the module graph.");
 
 // TODO(aryap): The ordering has to be deterministic between runs if we're just
@@ -70,7 +76,8 @@ int main(int argc, char **argv) {
       // Cells become vertices. Each has a list of ports. Each port has an
       // entry in a separate object that determines whether it is input or
       // output, which we have to consult. Ports are connected to multiple
-      // nets, denoted by integers.
+      // nets, denoted by integers. We also need to check the "type:" field, to
+      // see if this is a LUT or a flip-flop.
       if (module_json.value().find("cells") != module_json.value().end()) {
         for (const auto &cells_json_it : module_json.value()["cells"].items()) {
           std::vector<std::string> in_nets;
@@ -95,7 +102,19 @@ int main(int argc, char **argv) {
             }
           }
           assert(out_nets.size() == 1);
-          g.AddVertex(in_nets, out_nets.back());
+          // Figure out what kind of node we have.
+          jsondotrulo::VertexType type = jsondotrulo::VertexType::UNKNOWN;
+          const std::string &cell_type = cells_json["type"];
+          if (cell_type.find("lut") != std::string::npos) {
+            type = jsondotrulo::VertexType::LUT;
+          } else if (cell_type.find("DFF") != std::string::npos) {
+            type = jsondotrulo::VertexType::FLIP_FLOP;
+          } else {
+            std::cout << "Warning, could not identify cell type: " << cell_type
+                      << std::endl;
+          }
+            
+          g.AddVertex(type, in_nets, out_nets.back());
         }
       }
       // Find input and output ports. Each port's name is a key, and the object
@@ -128,7 +147,7 @@ int main(int argc, char **argv) {
         g.AddOutputEdges(out_ports);
       }
       // TODO(aryap): REMOVE THIS HACK!
-      if (g.name() != FLAGS_top) {
+      if (!FLAGS_top.empty() && g.name() != FLAGS_top) {
         continue;
       }
       if (!FLAGS_hmetis_partition_file.empty()) {
@@ -139,21 +158,35 @@ int main(int argc, char **argv) {
       if (FLAGS_print) {
         g.Print();
       }
-      // Graph object should now be complete. Write different formats:
+      g.WeightCombinatorialPaths();
+      // Graph object should now be complete. Write different formats now.
+      // Except if we weren't given a --top argument, we probably want to avoid
+      // the complications of writing the module name to the filename:
+      std::string top_part = FLAGS_top.empty() ? "" : "." + g.name();
       if (!FLAGS_dot_file.empty()) {
-        std::string file_name = FLAGS_dot_file + "." + g.name() + ".gv";
+        std::string file_name = FLAGS_dot_file + top_part + ".gv";
         std::cout << g.name() << ": wrote " << file_name << std::endl;
         WriteFile(file_name, g.AsDOT());
       }
       if (!FLAGS_m_file.empty()) {
-        std::string file_name = FLAGS_m_file + "." + g.name() + ".m";
+        std::string file_name = FLAGS_m_file + top_part + ".m";
         std::cout << g.name() << ": wrote " << file_name << std::endl;
         WriteFile(file_name, g.AsMFile());
       }
       if (!FLAGS_hmetis_file.empty()) {
-        std::string file_name = FLAGS_hmetis_file + "." + g.name() + ".hmetis";
+        std::string file_name = FLAGS_hmetis_file + top_part + ".hmetis";
         std::cout << g.name() << ": wrote " << file_name << std::endl;
         WriteFile(file_name, g.AsHMETIS());
+      }
+      if (!FLAGS_graph6_file.empty()) {
+        std::string file_name = FLAGS_graph6_file + top_part + ".g6";
+        std::cout << g.name() << ": wrote " << file_name << std::endl;
+        WriteFile(file_name, g.AsGraph6());
+      }
+      if (!FLAGS_edge_list.empty()) {
+        std::string file_name = FLAGS_edge_list + top_part + ".edges";
+        std::cout << g.name() << ": wrote " << file_name << std::endl;
+        WriteFile(file_name, g.AsEdgeListWithWeights());
       }
     }
   }
