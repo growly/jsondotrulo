@@ -37,9 +37,8 @@ class Vertex {
   std::vector<Edge*> &in() { return in_; }
   const std::vector<Edge*> &in() const { return in_; }
 
-  Edge *out() { return out_; }
-  const Edge *out() const { return out_; }
-  void set_out(Edge *out) { out_ = out; }
+  std::vector<Edge*> &out() { return out_; }
+  const std::vector<Edge*> &out() const { return out_; }
 
   double weight() { return weight_; }
   void set_weight(const double weight) { weight_ = weight; }
@@ -75,7 +74,7 @@ class Vertex {
   size_t index_;
   int partition_;  // -1 means no partition.
   std::vector<Edge*> in_;
-  Edge *out_;
+  std::vector<Edge*> out_;
   double weight_;
   VertexType type_;
 };

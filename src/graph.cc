@@ -35,77 +35,86 @@ Edge *Graph::FindOrCreateEdge(const std::string &name) {
   return net;
 }
 
-double Graph::ApproximateCost(const std::vector<Vertex*> &path) {
+double Graph::ApproximateCost(const Path &path) {
   return static_cast<double>(path.size());
 }
 
 void Graph::AddVertex(
       const VertexType &type,
       const std::vector<std::string> &input_edge_names,
-      const std::string &output_edge_name) {
+      const std::vector<std::string> &output_edge_names) {
   size_t vertex_index = vertices_.size();
   Vertex *vertex = new Vertex(vertex_index, type);
-  Edge *out_edge = FindOrCreateEdge(output_edge_name);
-  out_edge->in.insert(vertex);
-  vertex->set_out(out_edge);
   for (const auto &input : input_edge_names) {
     Edge *in_edge = FindOrCreateEdge(input);
     in_edge->out.insert(vertex);
     vertex->in().push_back(in_edge);
   }
+  for (const auto &output : output_edge_names) {
+    Edge *out_edge = FindOrCreateEdge(output);
+    out_edge->in.insert(vertex);
+    vertex->out().push_back(out_edge);
+  }
   vertices_.push_back(vertex);
 }
 
 void Graph::WeightCombinatorialPaths() {
-  // The goal is to find every path from one flip to another flip flop, through
-  // whatever other vertices.
+  // The goal is to find every path from one flip flop to another flip flop,
+  // through whatever other vertices.
 
-  // TODO(aryap): Paths are a list of vertices, since for now each vertex has
-  // only one output. 'paths' contains every path created in this function. The
-  // contents must be deleted at the end. unique_ptr?
-  std::vector<std::vector<Vertex*>*> paths;
-  std::vector<std::vector<Vertex*>*> complete;
-  for (Vertex *start : vertices_) {
-    if (start->type() != VertexType::FLIP_FLOP) continue;
+  // Paths must be deleted at the end of this scope!
+  std::set<Path*> paths;
+  std::vector<Path*> complete;
+  for (Vertex *start_vertex : vertices_) {
+    if (start_vertex->type() != VertexType::FLIP_FLOP) continue;
 
-    std::set<Vertex*> visited;
-    std::vector<Vertex*> *start_path = new std::vector<Vertex*>{start};
-    paths.push_back(start_path);
-    std::vector<std::pair<Vertex*, std::vector<Vertex*>*>> to_visit;
-    to_visit.push_back(std::make_pair(start, start_path));
+    for (Edge *start_edge : start_vertex->out()) {
+      // The set of edges to not follow again _out_ of a vertex.
+      std::set<Edge*> visited{start_edge};
 
-    // We do not care for the other drivers of the same net. Presumably they
-    // are not on the path.
-    while (!to_visit.empty()) {
-      Vertex *current = to_visit.back().first;
-      std::vector<Vertex*> *path = to_visit.back().second;
-      to_visit.pop_back();
-      if (visited.find(current) != visited.end()) continue;
-      visited.insert(current);
+      Path *start_path = new Path{{start_vertex, start_edge}};
+      paths.insert(start_path);
 
-      // Paths end at flip flops, but we have to make sure we go somewhere
-      // first (otherwise the starting node, which is also a flip flop, would
-      // terminate the path). At the same time, loops are ok.
-      if (path->size() > 1 && current->type() == VertexType::FLIP_FLOP) {
-        // Paths end here.
-        complete.push_back(path);
-        continue;
-      }
+      std::vector<std::pair<Edge*, Path*>> to_visit;
+      to_visit.push_back(std::make_pair(start_edge, start_path));
 
-      if (current->out() == nullptr) continue;
+      // We do not care for the other drivers of the same net. Presumably they
+      // are not on the path.
+      while (!to_visit.empty()) {
+        Edge *current = to_visit.back().first;
+        Path *path = to_visit.back().second;
+        to_visit.pop_back();
 
-      for (Vertex *next_hop : current->out()->out) {
-        // Create a new path for the each next-hop.
-        std::vector<Vertex*> *new_path =
-            new std::vector<Vertex*>(path->begin(), path->end());
-        new_path->push_back(next_hop);
-        paths.push_back(new_path);
-        to_visit.push_back(std::make_pair(next_hop, new_path));
+        if (visited.find(current) != visited.end()) continue;
+        visited.insert(current);
+
+        for (Vertex *next_vertex : current->out) {
+          // Paths end at flip-flops.
+          if (next_vertex->type() == VertexType::FLIP_FLOP) {
+            Path *new_path = new Path(path->begin(), path->end());
+            new_path->push_back(
+                std::make_pair(next_vertex, nullptr));
+            paths.insert(new_path);
+            complete.push_back(new_path);
+            continue;
+          }
+
+          // If the path-so-far isn't ending, extend a copy of the path with
+          // the next edge to follow.
+          for (Edge *next_edge : next_vertex->out()) {
+            // Create a new path for the each next-hop.
+            Path *new_path = new Path(path->begin(), path->end());
+            new_path->push_back(
+                std::make_pair(next_vertex, next_edge));
+            paths.insert(new_path);
+            to_visit.push_back(std::make_pair(next_edge, new_path));
+          }
+        }
       }
     }
   }
 
-  for (std::vector<Vertex*> *path : complete) {
+  for (Path *path : complete) {
     //std::cout << "cb path: ";
     //for (int i = 0; i < path->size() - 1; ++i) {
     //  std::cout << (*path)[i]->name() << " -> ";
@@ -114,8 +123,8 @@ void Graph::WeightCombinatorialPaths() {
 
     // Last hop in path is terminal
     double path_cost = ApproximateCost(*path);
-    for (int i = 0; i < path->size() - 1; ++i) {
-      Edge *edge = path->at(i)->out();
+    for (auto &pair : *path) {
+      Edge *edge = pair.second;
       if (edge == nullptr) continue;
       edge->weight = std::max(edge->weight, path_cost);
     }
@@ -390,9 +399,10 @@ std::string Graph::AsGraph6() const {
       // TODO(aryap): Are other vertices driven by the same input edge as this
       // one adjacent to this one?
     }
-    if (vertex->out() == nullptr) continue;
-    for (const Vertex *out_vertex : vertex->out()->out) {
-      adjacent_vertices[i].insert(out_vertex->index());
+    for (const Edge *out_edge : vertex->out()) {
+      for (const Vertex *out_vertex : out_edge->out) {
+        adjacent_vertices[i].insert(out_vertex->index());
+      }
     }
   }
 
@@ -414,8 +424,7 @@ std::string Graph::AsEdgeListWithWeights() const {
   for (const Edge *edge : edges_)
     for (const Vertex *in : edge->in)
       for (const Vertex *out : edge->out)
-        repr += std::to_string(in->index()) + " "
-                + std::to_string(out->index()) + " "
+        repr += in->name() + " " + out->name() + " "
                 + std::to_string(edge->weight) + "\n";
   return repr;
 }

@@ -12,6 +12,7 @@
 
 namespace jsondotrulo {
 
+typedef std::vector<std::pair<Vertex*, Edge*>> Path;
 
 // This abstractly represents a self-contained graph, i.e. a model.
 // TODO(aryap): This owns its child objects and must delete them.
@@ -25,9 +26,9 @@ class Graph {
   void AddOutputEdges(const std::vector<std::string> &output_edge_names);
 
   void AddVertex(
-      const VertexType &type,
-      const std::vector<std::string> &input_edge_names,
-      const std::string &output_edge_name);
+        const VertexType &type,
+        const std::vector<std::string> &input_edge_names,
+        const std::vector<std::string> &output_edge_names);
 
   // Finds all paths between synchronous elements (flip flops). Assigns weights
   // accordingly, I guess. TODO(aryap): Find the right weight-assignment
@@ -55,7 +56,7 @@ class Graph {
   const std::string &name() const { return name_; }
 
  private:
-  static double ApproximateCost(const std::vector<Vertex*> &path);
+  static double ApproximateCost(const Path &path);
 
   Edge *FindOrCreateEdge(const std::string &name);
 

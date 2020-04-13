@@ -101,7 +101,7 @@ int main(int argc, char **argv) {
               }
             }
           }
-          assert(out_nets.size() == 1);
+          // assert(out_nets.size() == 1); // TODO(aryap): make sure this still works.
           // Figure out what kind of node we have.
           jsondotrulo::VertexType type = jsondotrulo::VertexType::UNKNOWN;
           const std::string &cell_type = cells_json["type"];
@@ -114,7 +114,7 @@ int main(int argc, char **argv) {
                       << std::endl;
           }
             
-          g.AddVertex(type, in_nets, out_nets.back());
+          g.AddVertex(type, in_nets, out_nets);
         }
       }
       // Find input and output ports. Each port's name is a key, and the object
