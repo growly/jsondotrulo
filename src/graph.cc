@@ -77,13 +77,15 @@ void Graph::AddVertex(
 
 void Graph::ExpandInstances(
     const std::unordered_map<std::string, Graph*> &modules_by_name) {
-  std::cout << "Expanding instances." << std::endl;
   while (!instances_.empty()) {
     // Remove expanded instances from vertices_, and then free memory.
     std::set<Edge*> edges_to_delete;
 
     Vertex *instance = instances_.back();
     instances_.pop_back();
+    std::cout << "Expanding instances (" << instances_.size()
+              << " remain); current: vertex " << instance->name() << " of type "
+              << instance->instance_of() << std::endl;
 
     // Try to find Graph for instance type in the given map.
     const std::string &instance_of = instance->instance_of();
@@ -111,6 +113,7 @@ void Graph::ExpandInstances(
       std::string new_edge_name = instance->name() + "." + old_edge->name;
       Edge *new_edge = FindOrCreateEdge(new_edge_name);
       edge_map[old_edge] = new_edge;
+      //std::cout << new_edge_name << " created " << new_edge << std::endl;
     }
 
     for (Vertex *old_vertex : master->vertices_) {
@@ -119,13 +122,12 @@ void Graph::ExpandInstances(
           old_vertex->type() == VertexType::OUT_PIN)
         continue;
       // Get new index for copied instance.
-      size_t vertex_index = vertices_.size();
-      Vertex *new_vertex = new Vertex(vertex_index, old_vertex->type());
+      size_t new_index = vertices_.size();
+      Vertex *new_vertex = new Vertex(new_index, old_vertex->type());
       new_vertex->set_instance_of(old_vertex->instance_of());
       new_vertex->GenerateName();
       if (new_vertex->type() == VertexType::MODULE)
         instances_.push_back(new_vertex);
-      new_vertex->set_instance_of(old_vertex->instance_of());
       new_vertex->out_ports().insert(new_vertex->out_ports().begin(),
                                      old_vertex->out_ports().begin(),
                                      old_vertex->out_ports().end());
@@ -145,6 +147,7 @@ void Graph::ExpandInstances(
         // There should be a 1:1 correspondence of old and new edges!
         assert(edge_map_it != edge_map.end());
         Edge *new_edge = edge_map_it->second;
+        //std::cout << "v " << new_vertex << " (" << new_vertex->name() << ") added to " << new_edge << " " << new_edge->name << std::endl;
         new_edge->out.insert(new_vertex);
         new_vertex->in().push_back(new_edge);
       }
@@ -185,22 +188,33 @@ void Graph::ExpandInstances(
         // Remove the instance vertex (the one of type MODULE that is to
         // expanded into the full module); replace it with the internal vertex
         // within the graph to which that edge would connect.
+        //std::cout << "internal e " << internal << std::endl;
+        //std::cout << "[inputs] vertex" <<  instance << " (" << instance->name() << ") being removed from edge "
+        //          << external << " (" << external->name << ") " << std::endl;
+
         size_t erased = external->out.erase(instance);
-        assert(erased == 1);
+        // Since external->out is a set but we track multiple connections to
+        // the same net through a vector in the input list, this may be
+        // redundant on successive iterations.
+   
         // Merge the input/output sets between the internal/external edge.
         external->in.insert(internal->in.begin(), internal->in.end());
         external->out.insert(internal->out.begin(), internal->out.end());
         
-        // Remove the old internal input edge from the inputs of the first
-        // vertices. Install the external input edge instead.
-        for (Vertex *vertex :  internal->out) {
-          auto iter = std::find(
-              vertex->in().begin(), vertex->in().end(), internal);
-
-          // The internal edge should already have been added to the vertex's
-          // input edge list.
-          assert(iter != vertex->in().end());
-          *iter = external;
+        // Replace every occurrence of the temporary internal edge - at the
+        // vertices which are both inputs and outputs to the edge - with the
+        // external edge subsuming it.
+        for (Vertex *vertex : internal->in) {
+          // There might be multiple connections to this edge!
+          //std::cout << "[inputs] replacing e " << internal << "  with e " << external
+          //          << " on v " << vertex << std::endl;
+          std::replace(vertex->in().begin(), vertex->in().end(), internal, external);
+        }
+        for (Vertex *vertex : internal->out) {
+          // There might be multiple connections to this edge!
+          //std::cout << "[inputs] replacing e " << internal << "  with e " << external
+          //          << " on v " << vertex << std::endl;
+          std::replace(vertex->in().begin(), vertex->in().end(), internal, external);
         }
         internal->in.clear();
         internal->out.clear();
@@ -244,22 +258,25 @@ void Graph::ExpandInstances(
         // Remove the instance vertex (the one of type MODULE that is to
         // expanded into the full module); replace it with the internal vertex
         // within the graph to which that edge would connect.
+        //std::cout << "internal e " << internal << std::endl;
+        //std::cout << "[outputs] vertex" <<  instance << " (" << instance->name() << ") being removed from edge "
+        //          << external << " (" << external->name << ") " << std::endl;
         size_t erased = external->in.erase(instance);
-        assert(erased == 1);
+
         // Merge the input/output sets between the internal/external edge.
         external->in.insert(internal->in.begin(), internal->in.end());
         external->out.insert(internal->out.begin(), internal->out.end());
         
-        // Remove the old internal output edge from the inputs of the first
-        // vertices. Install the external output edge instead.
-        for (Vertex *vertex :  internal->in) {
-          auto iter = std::find(
-              vertex->out().begin(), vertex->out().end(), internal);
-
-          // The internal edge should already have been added to the vertex's
-          // input edge list.
-          assert(iter != vertex->out().end());
-          *iter = external;
+        
+        for (Vertex *vertex : internal->in) {
+        //  std::cout << "[outputs] replacing e " << internal << "  with e " << external
+        //            << " on v " << vertex << std::endl;
+          std::replace(vertex->out().begin(), vertex->out().end(), internal, external);
+        }
+        for (Vertex *vertex : internal->out) {
+        //  std::cout << "[outputs] replacing e " << internal << "  with e " << external
+        //            << " on v " << vertex << std::endl;
+          std::replace(vertex->in().begin(), vertex->in().end(), internal, external);
         }
         internal->in.clear();
         internal->out.clear();
@@ -267,9 +284,6 @@ void Graph::ExpandInstances(
       }
     }
 
-    // TODO(aryap): Also delete the instance vertex and make sure the IN/OUT
-    // pins are not copied!
- 
     // Remove the instance vertex and all the internal input/output edges we
     // copied.
     auto vertex_iter = std::find(
@@ -284,10 +298,11 @@ void Graph::ExpandInstances(
     for (size_t i = 0; i < vertices_.size(); ++i) {
       vertices_[i]->set_index(i);
       // TODO(aryap): Should Vertices be renamed?
-      vertices_[i]->GenerateName();
+      //vertices_[i]->GenerateName();
     }
 
     for (Edge *edge : edges_to_delete) {
+      //std::cout << "deleting e " << edge << " " << edge->name << std::endl;
       assert(edge->in.empty());
       assert(edge->out.empty());
 
@@ -298,6 +313,8 @@ void Graph::ExpandInstances(
       auto edge_it = std::find(edges_.begin(), edges_.end(), edge);
       assert(edge_it != edges_.end());
       edges_.erase(edge_it);
+
+      delete edge;
     }
 
     assert(edges_by_name_.size() == edges_.size());
@@ -314,11 +331,20 @@ void Graph::WeightCombinatorialPaths() {
   // The goal is to find every path from one flip flop to another flip flop,
   // through whatever other vertices.
 
+  std::cout << "Finding paths between synchronous elements" << std::endl;
+
   // Paths must be deleted at the end of this scope!
   std::set<Path*> paths;
   std::vector<Path*> complete;
+  size_t i = 0;
   for (Vertex *start_vertex : vertices_) {
-    if (start_vertex->type() != VertexType::FLIP_FLOP) continue;
+    ++i;
+    if (i % (vertices_.size() / 100) == 0) {
+      std::cout << i << "/" << vertices_.size() << " start points checked; "
+                << complete.size() << " paths found" << std::endl;
+    }
+
+    if (start_vertex->IsSynchronous()) continue;
 
     for (Edge *start_edge : start_vertex->out()) {
       // The set of edges to not follow again _out_ of a vertex.
@@ -342,7 +368,7 @@ void Graph::WeightCombinatorialPaths() {
 
         for (Vertex *next_vertex : current->out) {
           // Paths end at flip-flops.
-          if (next_vertex->type() == VertexType::FLIP_FLOP) {
+          if (next_vertex->IsSynchronous()) {
             Path *new_path = new Path(path->begin(), path->end());
             new_path->push_back(
                 std::make_pair(next_vertex, nullptr));

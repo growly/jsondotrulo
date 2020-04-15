@@ -13,7 +13,8 @@ enum VertexType {
   OUT_PIN = 2,
   LUT = 3,
   FLIP_FLOP = 4,
-  MODULE = 5,
+  LATCH = 5,
+  MODULE = 6,
 };
 
 // This abstractly represents an vertex in the circuit.
@@ -40,6 +41,9 @@ class Vertex {
       case VertexType::FLIP_FLOP:
         name_ = "FF_";
         break;
+      case VertexType::LATCH:
+        name_ = "LATCH_";
+        break;
       case VertexType::MODULE:
         name_ = instance_of_ + "_";
         break;
@@ -48,6 +52,16 @@ class Vertex {
         break;
     }
     name_ += std::to_string(index_);
+  }
+
+  bool IsSynchronous() const {
+    switch (type_) {
+      case VertexType::FLIP_FLOP:
+      case VertexType::LATCH:
+        return true;
+      default:
+        return false;
+    }
   }
 
   const std::string &name() const { return name_; }

@@ -59,6 +59,64 @@ std::string ReadFile(const std::string &file_name) {
   return content;
 }
 
+void GuessTop(
+    const std::unordered_map<std::string, jsondotrulo::Graph*> &modules_by_name,
+    jsondotrulo::Graph **top) {
+  std::unordered_map<jsondotrulo::Graph*, std::set<jsondotrulo::Graph*>>
+      instantiates;
+
+  for (const auto &pair : modules_by_name) {
+    jsondotrulo::Graph *graph = pair.second;
+    for (jsondotrulo::Vertex *vertex : graph->vertices()) {
+      if (vertex->type() != jsondotrulo::VertexType::MODULE) continue;
+      auto module_it = modules_by_name.find(vertex->instance_of());
+      assert(module_it != modules_by_name.end());
+      jsondotrulo::Graph *instantiated = module_it->second;
+      // Should probably check that this is a tree.
+      instantiates[graph].insert(instantiated);
+    }
+  }
+
+  // We're going to take the root of the largest tree
+  size_t max_children = 0;
+  jsondotrulo::Graph *max_parent = nullptr;
+  for (const auto &pair : instantiates) {
+    jsondotrulo::Graph *root = pair.first;
+    std::set<jsondotrulo::Graph*> all_children(pair.second.begin(),
+                                               pair.second.end());
+    std::vector<jsondotrulo::Graph*> to_visit(pair.second.begin(),
+                                              pair.second.end());
+    while (!to_visit.empty()) {
+      jsondotrulo::Graph *parent = to_visit.back();
+      to_visit.pop_back();
+      const auto &children_it = instantiates.find(parent);
+      if (children_it == instantiates.end()) continue;
+      const std::set<jsondotrulo::Graph*> &children = children_it->second;
+      for (jsondotrulo::Graph* child : children) {
+        if (all_children.find(child) == all_children.end()) {
+          all_children.insert(child);
+          to_visit.push_back(child);
+        }
+      }
+    }
+
+    std::cout << "Module " << root->name() << " has " << all_children.size()
+              << " children" << std::endl;
+    if (all_children.size() >= max_children) {
+      max_children = all_children.size();
+      max_parent = root;
+    }
+  }
+
+  std::cout << "Guessed top: " << max_parent->name() << " (" << max_children
+            << " children)" << std::endl;
+
+  if (max_parent == nullptr) {
+    std::cerr << "Error! No top found." << std::endl;
+  }
+  *top = max_parent;
+}
+
 int main(int argc, char **argv) {
   if (argc < 2) {
     std::cout << argv[0] << " Version " <<  jsondotrulo_VERSION_MAJOR << "."
@@ -72,7 +130,6 @@ int main(int argc, char **argv) {
   i >> j;
 
   std::unordered_map<std::string, jsondotrulo::Graph*> modules_by_name;
-
 
   // Construct Graphs from ingested JSON.
   if (j.find("modules") != j.end()) {
@@ -116,6 +173,8 @@ int main(int argc, char **argv) {
             type = jsondotrulo::VertexType::LUT;
           } else if (cell_type.find("DFF") != std::string::npos) {
             type = jsondotrulo::VertexType::FLIP_FLOP;
+          } else if (cell_type.find("LATCH") != std::string::npos) {
+            type = jsondotrulo::VertexType::LATCH;
           } else {
             std::cout << "Warning, could not identify cell type: " << cell_type
                       << std::endl;
@@ -179,16 +238,14 @@ int main(int argc, char **argv) {
   // After initial module read, we can instantiate child modules. But first we
   // have to determine our starting point (top).
   if (FLAGS_top.empty()) {
-    // TODO(aryap): Or maybe make a guess?
-    std::cerr << "No top module specified." << std::endl;
-    return EXIT_FAILURE;
-  }
-  auto module_it = modules_by_name.find(FLAGS_top);
-  if (module_it != modules_by_name.end()) {
-    top = module_it->second;
+    GuessTop(modules_by_name, &top);
   } else {
-    std::cerr << "Top module \"" << FLAGS_top << "\" not found." << std::endl;
-    return EXIT_FAILURE;
+    auto module_it = modules_by_name.find(FLAGS_top);
+    if (module_it == modules_by_name.end()) {
+      std::cerr << "Top module \"" << FLAGS_top << "\" not found." << std::endl;
+      return EXIT_FAILURE;
+    }
+    top = module_it->second;
   }
   if (FLAGS_expand_instances) {
     top->ExpandInstances(modules_by_name);

@@ -63,6 +63,8 @@ class Graph {
   // into this graph.
   void ReadHMETISPartitions(const std::string &in_str);
 
+  const std::vector<Vertex*> vertices() const { return vertices_; }
+
   const std::string &name() const { return name_; }
 
  private:
