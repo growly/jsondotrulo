@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -41,21 +42,272 @@ double Graph::ApproximateCost(const Path &path) {
 
 void Graph::AddVertex(
       const VertexType &type,
-      const std::vector<std::string> &input_edge_names,
-      const std::vector<std::string> &output_edge_names) {
+      const std::unordered_map<std::string, std::vector<std::string>>
+          &input_edges,
+      const std::unordered_map<std::string, std::vector<std::string>>
+          &output_edges,
+      const std::string &instance_of) {
   size_t vertex_index = vertices_.size();
   Vertex *vertex = new Vertex(vertex_index, type);
-  for (const auto &input : input_edge_names) {
-    Edge *in_edge = FindOrCreateEdge(input);
-    in_edge->out.insert(vertex);
-    vertex->in().push_back(in_edge);
+  vertex->set_instance_of(instance_of);
+  vertex->GenerateName();
+  for (const auto &input_it : input_edges) {
+    const std::string &port = input_it.first;
+    for (const auto &input : input_it.second) {
+      Edge *in_edge = FindOrCreateEdge(input);
+      in_edge->out.insert(vertex);
+      vertex->in().push_back(in_edge);
+      vertex->in_ports().push_back(port);
+    }
   }
-  for (const auto &output : output_edge_names) {
-    Edge *out_edge = FindOrCreateEdge(output);
-    out_edge->in.insert(vertex);
-    vertex->out().push_back(out_edge);
+  for (const auto &output_it : output_edges) {
+    const std::string &port = output_it.first;
+    for (const auto &output : output_it.second) {
+      Edge *out_edge = FindOrCreateEdge(output);
+      out_edge->in.insert(vertex);
+      vertex->out().push_back(out_edge);
+      vertex->out_ports().push_back(port);
+    }
+  }
+  if (type == VertexType::MODULE) {
+    instances_.push_back(vertex);
   }
   vertices_.push_back(vertex);
+}
+
+void Graph::ExpandInstances(
+    const std::unordered_map<std::string, Graph*> &modules_by_name) {
+  std::cout << "Expanding instances." << std::endl;
+  while (!instances_.empty()) {
+    // Remove expanded instances from vertices_, and then free memory.
+    std::set<Edge*> edges_to_delete;
+
+    Vertex *instance = instances_.back();
+    instances_.pop_back();
+
+    // Try to find Graph for instance type in the given map.
+    const std::string &instance_of = instance->instance_of();
+    auto modules_it = modules_by_name.find(instance_of);
+    if (modules_it == modules_by_name.end()) {
+      std::cerr << "Warning: Could not find Graph for instance of '"
+                << instance_of << "'" << std::endl;
+      continue;
+    }
+    Graph *master = modules_it->second;
+
+    // Maps vertices & nodes in the master Graph to the new copies in the
+    // instantiated copy.
+    std::unordered_map<Vertex*, Vertex*> vertex_map;
+    std::unordered_map<Edge*, Edge*> edge_map;
+
+    // Copy everything.
+    for (Edge *old_edge: master->edges_) {
+      // TODO(aryap): Generating a 'unique' name for this edge like this
+      // doesn't scale. Maybe it's better to just keep number edges from the
+      // last edge in the top module. So this name should be unique. Otherwise
+      // we'd just have to reproduce some of the FindOrCreateEdge functionality
+      // and not rely on unique names. But we'd still need a unique name. So
+      // whatever.
+      std::string new_edge_name = instance->name() + "." + old_edge->name;
+      Edge *new_edge = FindOrCreateEdge(new_edge_name);
+      edge_map[old_edge] = new_edge;
+    }
+
+    for (Vertex *old_vertex : master->vertices_) {
+      // Skip copying input/output pins.
+      if (old_vertex->type() == VertexType::IN_PIN ||
+          old_vertex->type() == VertexType::OUT_PIN)
+        continue;
+      // Get new index for copied instance.
+      size_t vertex_index = vertices_.size();
+      Vertex *new_vertex = new Vertex(vertex_index, old_vertex->type());
+      new_vertex->set_instance_of(old_vertex->instance_of());
+      new_vertex->GenerateName();
+      if (new_vertex->type() == VertexType::MODULE)
+        instances_.push_back(new_vertex);
+      new_vertex->set_instance_of(old_vertex->instance_of());
+      new_vertex->out_ports().insert(new_vertex->out_ports().begin(),
+                                     old_vertex->out_ports().begin(),
+                                     old_vertex->out_ports().end());
+      for (Edge *old_out_edge : old_vertex->out()) {
+        auto edge_map_it = edge_map.find(old_out_edge);
+        // There should be a 1:1 correspondence of old and new edges!
+        assert(edge_map_it != edge_map.end());
+        Edge *new_edge = edge_map_it->second;
+        new_edge->in.insert(new_vertex);
+        new_vertex->out().push_back(new_edge);
+      }
+      new_vertex->in_ports().insert(new_vertex->in_ports().begin(),
+                                    old_vertex->in_ports().begin(),
+                                    old_vertex->in_ports().end());
+      for (Edge *old_in_edge : old_vertex->in()) {
+        auto edge_map_it = edge_map.find(old_in_edge);
+        // There should be a 1:1 correspondence of old and new edges!
+        assert(edge_map_it != edge_map.end());
+        Edge *new_edge = edge_map_it->second;
+        new_edge->out.insert(new_vertex);
+        new_vertex->in().push_back(new_edge);
+      }
+      vertices_.push_back(new_vertex);
+    }
+
+    // To avoid creating and maintaining this structure for every vertex, we
+    // create it here.
+    std::unordered_map<std::string, std::vector<Edge*>> instance_input_ports;
+    for (int i = 0; i < instance->in().size(); ++i) {
+      const std::string &port_name = instance->in_ports().at(i);
+      Edge *edge = instance->in().at(i);
+      instance_input_ports[port_name].push_back(edge);
+    }
+
+    // Now map inputs to the old vertex to those in the new vertex.
+    for (auto &pair : instance_input_ports) {
+      const std::string &port_name = pair.first;
+      std::vector<Edge*> &instance_inputs = pair.second;
+
+      // Find corresponding edges in master Graph for this instance.
+      auto master_inputs_it = master->inputs_.find(port_name);
+      if (master_inputs_it == master->inputs_.end()) {
+        std::cerr << "Error! Port " << port_name << " of instance vertex "
+                  << instance->name() << " was not found in master Graph for "
+                  << instance->instance_of() << std::endl;
+        continue;
+      }
+      std::vector<Edge*> &master_inputs = master_inputs_it->second;
+
+      for (int i = 0; i < instance_inputs.size(); ++i) {
+        Edge *external = instance_inputs[i];
+        Edge *master = master_inputs[i];
+        auto internal_edge_it = edge_map.find(master);
+        assert(internal_edge_it != edge_map.end());
+        Edge *internal = internal_edge_it->second;
+
+        // Remove the instance vertex (the one of type MODULE that is to
+        // expanded into the full module); replace it with the internal vertex
+        // within the graph to which that edge would connect.
+        size_t erased = external->out.erase(instance);
+        assert(erased == 1);
+        // Merge the input/output sets between the internal/external edge.
+        external->in.insert(internal->in.begin(), internal->in.end());
+        external->out.insert(internal->out.begin(), internal->out.end());
+        
+        // Remove the old internal input edge from the inputs of the first
+        // vertices. Install the external input edge instead.
+        for (Vertex *vertex :  internal->out) {
+          auto iter = std::find(
+              vertex->in().begin(), vertex->in().end(), internal);
+
+          // The internal edge should already have been added to the vertex's
+          // input edge list.
+          assert(iter != vertex->in().end());
+          *iter = external;
+        }
+        internal->in.clear();
+        internal->out.clear();
+        edges_to_delete.insert(internal);
+      }
+    }
+
+    // TODO(aryap): Refactor this and the above stanza into a separate function.
+    //
+    // And then map outputs from the old vertex to those in the expanded
+    // module.
+    std::unordered_map<std::string, std::vector<Edge*>> instance_output_ports;
+    for (int i = 0; i < instance->out().size(); ++i) {
+      const std::string &port_name = instance->out_ports().at(i);
+      Edge *edge = instance->out().at(i);
+      instance_output_ports[port_name].push_back(edge);
+    }
+
+    // Now map outputs from the old vertex to those in the new vertex.
+    for (auto &pair : instance_output_ports) {
+      const std::string &port_name = pair.first;
+      std::vector<Edge*> &instance_outputs = pair.second;
+
+      // Find corresponding edges in master Graph for this instance.
+      auto master_outputs_it = master->outputs_.find(port_name);
+      if (master_outputs_it == master->outputs_.end()) {
+        std::cerr << "Error! Port " << port_name << " of instance vertex "
+                  << instance->name() << " was not found in master Graph for "
+                  << instance->instance_of() << std::endl;
+        continue;
+      }
+      std::vector<Edge*> &master_outputs = master_outputs_it->second;
+
+      for (int i = 0; i < instance_outputs.size(); ++i) {
+        Edge *external = instance_outputs[i];
+        Edge *master = master_outputs[i];
+        auto internal_edge_it = edge_map.find(master);
+        assert(internal_edge_it != edge_map.end());
+        Edge *internal = internal_edge_it->second;
+
+        // Remove the instance vertex (the one of type MODULE that is to
+        // expanded into the full module); replace it with the internal vertex
+        // within the graph to which that edge would connect.
+        size_t erased = external->in.erase(instance);
+        assert(erased == 1);
+        // Merge the input/output sets between the internal/external edge.
+        external->in.insert(internal->in.begin(), internal->in.end());
+        external->out.insert(internal->out.begin(), internal->out.end());
+        
+        // Remove the old internal output edge from the inputs of the first
+        // vertices. Install the external output edge instead.
+        for (Vertex *vertex :  internal->in) {
+          auto iter = std::find(
+              vertex->out().begin(), vertex->out().end(), internal);
+
+          // The internal edge should already have been added to the vertex's
+          // input edge list.
+          assert(iter != vertex->out().end());
+          *iter = external;
+        }
+        internal->in.clear();
+        internal->out.clear();
+        edges_to_delete.insert(internal);
+      }
+    }
+
+    // TODO(aryap): Also delete the instance vertex and make sure the IN/OUT
+    // pins are not copied!
+ 
+    // Remove the instance vertex and all the internal input/output edges we
+    // copied.
+    auto vertex_iter = std::find(
+        vertices_.begin(), vertices_.end(), instance);
+    assert(vertex_iter != vertices_.end());
+    vertices_.erase(vertex_iter);
+
+    assert(std::find(
+        instances_.begin(), instances_.end(), instance) == instances_.end());
+    
+    // Have to reassign indices.
+    for (size_t i = 0; i < vertices_.size(); ++i) {
+      vertices_[i]->set_index(i);
+      // TODO(aryap): Should Vertices be renamed?
+      vertices_[i]->GenerateName();
+    }
+
+    for (Edge *edge : edges_to_delete) {
+      assert(edge->in.empty());
+      assert(edge->out.empty());
+
+      auto edges_by_name_it = edges_by_name_.find(edge->name);
+      assert(edges_by_name_it != edges_by_name_.end());
+      edges_by_name_.erase(edges_by_name_it);
+
+      auto edge_it = std::find(edges_.begin(), edges_.end(), edge);
+      assert(edge_it != edges_.end());
+      edges_.erase(edge_it);
+    }
+
+    assert(edges_by_name_.size() == edges_.size());
+
+    // Reassign Edge indices.
+    for (size_t i = 0; i < edges_.size(); ++i) {
+      edges_[i]->index = i;
+      // Edge names are NOT modified.
+    }
+  }
 }
 
 void Graph::WeightCombinatorialPaths() {
@@ -70,7 +322,7 @@ void Graph::WeightCombinatorialPaths() {
 
     for (Edge *start_edge : start_vertex->out()) {
       // The set of edges to not follow again _out_ of a vertex.
-      std::set<Edge*> visited{start_edge};
+      std::set<Edge*> visited;
 
       Path *start_path = new Path{{start_vertex, start_edge}};
       paths.insert(start_path);
@@ -115,14 +367,15 @@ void Graph::WeightCombinatorialPaths() {
   }
 
   for (Path *path : complete) {
-    //std::cout << "cb path: ";
-    //for (int i = 0; i < path->size() - 1; ++i) {
-    //  std::cout << (*path)[i]->name() << " -> ";
-    //}
-    //std::cout << path->back()->name() << std::endl;
-
     // Last hop in path is terminal
     double path_cost = ApproximateCost(*path);
+
+    // std::cout << "cb path: " << std::to_string(path_cost) << " ";
+    // for (int i = 0; i < path->size() - 1; ++i) {
+    //   std::cout << (*path)[i].first->name() << " -> ";
+    // }
+    // std::cout << path->back().first->name() << std::endl;
+
     for (auto &pair : *path) {
       Edge *edge = pair.second;
       if (edge == nullptr) continue;
@@ -132,25 +385,37 @@ void Graph::WeightCombinatorialPaths() {
   }
 }
 
-void Graph::AddInputEdges(const std::vector<std::string> &input_edge_names) {
-  for (const std::string &input : input_edge_names) {
-    Edge *net = FindOrCreateEdge(input);
-    size_t index = vertices_.size();
-    Vertex *in_vertex = new Vertex(index, VertexType::IN_PIN);
-    vertices_.push_back(in_vertex);
-    net->in.insert(in_vertex);
-    inputs_.push_back(net);
+void Graph::AddInputEdges(
+    const std::unordered_map<std::string, std::vector<std::string>>
+        &input_edges) {
+  for (const auto &pair : input_edges) {
+    const std::string &port_name = pair.first;
+    for (const std::string &input : pair.second) {
+      Edge *net = FindOrCreateEdge(input);
+      size_t index = vertices_.size();
+      Vertex *in_vertex = new Vertex(index, VertexType::IN_PIN);
+      in_vertex->GenerateName();
+      vertices_.push_back(in_vertex);
+      net->in.insert(in_vertex);
+      inputs_[port_name].push_back(net);
+    }
   }
 }
 
-void Graph::AddOutputEdges(const std::vector<std::string> &output_edge_names) {
-  for (const std::string &output : output_edge_names) {
-    Edge *net = FindOrCreateEdge(output);
-    size_t index = vertices_.size();
-    Vertex *out_vertex = new Vertex(index, VertexType::OUT_PIN);
-    vertices_.push_back(out_vertex);
-    net->out.insert(out_vertex);
-    outputs_.push_back(net);
+void Graph::AddOutputEdges(
+    const std::unordered_map<std::string, std::vector<std::string>>
+        &output_edges) {
+  for (const auto &pair : output_edges) {
+    const std::string &port_name = pair.first;
+    for (const std::string &output : pair.second) {
+      Edge *net = FindOrCreateEdge(output);
+      size_t index = vertices_.size();
+      Vertex *out_vertex = new Vertex(index, VertexType::OUT_PIN);
+      out_vertex->GenerateName();
+      vertices_.push_back(out_vertex);
+      net->out.insert(out_vertex);
+      outputs_[port_name].push_back(net);
+    }
   }
 }
 
@@ -191,13 +456,20 @@ void Graph::ReadHMETISPartitions(const std::string &in_str) {
 void Graph::Print() const {
   std::cout << "Graph \"" << name_ << "\":" << std::endl
       << "\tinputs: " << inputs_.size() << std::endl;
-  for (const auto &edge : inputs_)
-    std::cout << "\t\t" << edge->name << std::endl;
+  for (const auto &pair : inputs_) {
+    std::cout << "\t\t" << pair.first << std::endl;
+    for (const Edge *edge : pair.second)
+      std::cout << "\t\t\t" << edge->name << std::endl;
+  }
   std::cout << "\toutputs: " << outputs_.size() << std::endl;
-  for (const auto &edge : outputs_)
-    std::cout << "\t\t" << edge->name << std::endl;
+  for (const auto &pair : outputs_) {
+    std::cout << "\t\t" << pair.first << std::endl;
+    for (const Edge *edge : pair.second)
+      std::cout << "\t\t\t" << edge->name << std::endl;
+  }
 
   std::cout << "\tvertices: " << vertices_.size() << std::endl;
+  std::cout << "\tof which instances: " << instances_.size() << std::endl;
   std::cout << "\tedges: " << edges_.size() << std::endl;
   std::cout << "\tpartitions: "
             << std::to_string(edges_by_partition_.size() - 1) << std::endl;
