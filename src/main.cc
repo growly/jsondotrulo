@@ -108,12 +108,21 @@ void GuessTop(
     }
   }
 
-  std::cout << "Guessed top: " << max_parent->name() << " (" << max_children
-            << " children)" << std::endl;
-
+  // If there are no instantiations, just take the first one in the map.
+  if (max_parent == nullptr) {
+    auto iter = modules_by_name.begin();
+    if (iter != modules_by_name.end()) {
+      max_parent = iter->second;
+    }
+  }
+  
   if (max_parent == nullptr) {
     std::cerr << "Error! No top found." << std::endl;
+  } else {
+    std::cout << "Guessed top: " << max_parent->name() << " (" << max_children
+              << " children)" << std::endl;
   }
+
   *top = max_parent;
 }
 
@@ -215,11 +224,6 @@ int main(int argc, char **argv) {
         g->AddInputEdges(in_ports);
         g->AddOutputEdges(out_ports);
       }
-      if (!FLAGS_hmetis_partition_file.empty()) {
-        std::cout << g->name() << ": adding partition data from hMETIS file "
-                  << FLAGS_hmetis_partition_file << std::endl;
-        g->ReadHMETISPartitions(ReadFile(FLAGS_hmetis_partition_file));
-      }
       modules_by_name.insert({g->name(), g});
       if (FLAGS_print) {
         g->Print();
@@ -249,6 +253,12 @@ int main(int argc, char **argv) {
   }
   if (FLAGS_expand_instances) {
     top->ExpandInstances(modules_by_name);
+    // TODO(aryap): Hmmm. I guess this is deterministic enough to work?
+    if (!FLAGS_hmetis_partition_file.empty()) {
+      std::cout << top->name() << ": adding partition data from hMETIS file "
+                << FLAGS_hmetis_partition_file << std::endl;
+      top->ReadHMETISPartitions(ReadFile(FLAGS_hmetis_partition_file));
+    }
     if (FLAGS_print) {
       top->Print();
     }

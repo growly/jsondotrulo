@@ -337,9 +337,12 @@ void Graph::WeightCombinatorialPaths() {
   std::set<Path*> paths;
   std::vector<Path*> complete;
   size_t i = 0;
+  size_t update_interval =
+      std::max(vertices_.size() / 100, static_cast<size_t>(1));
+
   for (Vertex *start_vertex : vertices_) {
     ++i;
-    if (i % (vertices_.size() / 100) == 0) {
+    if (i % update_interval == 0) {
       std::cout << i << "/" << vertices_.size() << " start points checked; "
                 << complete.size() << " paths found" << std::endl;
     }
