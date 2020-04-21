@@ -343,7 +343,8 @@ void Graph::WeightCombinatorialPaths() {
   for (Vertex *start_vertex : vertices_) {
     ++i;
     if (i % update_interval == 0) {
-      std::cout << i << "/" << vertices_.size() << " start points checked; "
+      std::cout << "Finding paths: " << i << "/" << vertices_.size()
+                << " start points checked; "
                 << complete.size() << " paths found" << std::endl;
     }
 
@@ -391,9 +392,14 @@ void Graph::WeightCombinatorialPaths() {
             to_visit.push_back(std::make_pair(next_edge, new_path));
           }
         }
+
+        delete path;
       }
     }
   }
+
+  std::cout << "Finding paths: done" << std::endl;
+  std::cout << "Assigning edge weights" << std::endl;
 
   for (Path *path : complete) {
     // Last hop in path is terminal
