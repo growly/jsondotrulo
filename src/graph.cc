@@ -8,11 +8,16 @@
 #include <unordered_map>
 #include <utility>
 
+#include <gflags/gflags.h>
+
 #include "graph.h"
 #include "edge.h"
 #include "vertex.h"
 
 namespace jsondotrulo {
+
+DEFINE_bool(show_edge_longest_paths, false,
+            "Print the longest path traversing each edge when weighting them.");
 
 Graph::~Graph() {
   for (const Vertex *vertex : vertices_)
@@ -419,27 +424,32 @@ void Graph::WeightCombinatorialPaths() {
       edge->weight = std::max(edge->weight, path_cost);
       critical_paths[edge] = path;
     }
+
+    if (!FLAGS_show_edge_longest_paths)
+      delete path;
   }
 
-  for (Edge *edge : edges_) {
-    std::cout << "(" << edge->name << " wt: " << edge->weight << ") [";
-    auto it = critical_paths.find(edge);
-    if (it == critical_paths.end()) {
-      std::cout << "none]" << std::endl;
-      continue;
-    }
-    Path *path = it->second;
+  if (FLAGS_show_edge_longest_paths) {
+    for (Edge *edge : edges_) {
+      std::cout << "(" << edge->name << " wt: " << edge->weight << ") [";
+      auto it = critical_paths.find(edge);
+      if (it == critical_paths.end()) {
+        std::cout << "none]" << std::endl;
+        continue;
+      }
+      Path *path = it->second;
 
-    for (auto &pair : *path) {
-      std::cout << pair.first->name();
-      if (pair.second != nullptr)
-        std::cout << " -> " << pair.second->name << " -> ";
+      for (auto &pair : *path) {
+        std::cout << pair.first->name();
+        if (pair.second != nullptr)
+          std::cout << " -> " << pair.second->name << " -> ";
+      }
+      std::cout << "]" << std::endl;
     }
-    std::cout << "]" << std::endl;
+
+    for (auto &path : complete)
+      delete path;
   }
-
-  for (auto &path : complete)
-    delete path;
 }
 
 void Graph::AddInputEdges(
