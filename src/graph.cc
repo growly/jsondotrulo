@@ -348,7 +348,7 @@ void Graph::WeightCombinatorialPaths() {
                 << complete.size() << " paths found" << std::endl;
     }
 
-    if (start_vertex->IsSynchronous()) continue;
+    if (!start_vertex->IsSynchronous()) continue;
 
     for (Edge *start_edge : start_vertex->out()) {
       // The set of edges to not follow again _out_ of a vertex.
@@ -401,6 +401,8 @@ void Graph::WeightCombinatorialPaths() {
   std::cout << "Finding paths: done" << std::endl;
   std::cout << "Assigning edge weights" << std::endl;
 
+  std::unordered_map<Edge*, Path*> critical_paths;
+
   for (Path *path : complete) {
     // Last hop in path is terminal
     double path_cost = ApproximateCost(*path);
@@ -415,9 +417,29 @@ void Graph::WeightCombinatorialPaths() {
       Edge *edge = pair.second;
       if (edge == nullptr) continue;
       edge->weight = std::max(edge->weight, path_cost);
+      critical_paths[edge] = path;
     }
-    delete path;
   }
+
+  for (Edge *edge : edges_) {
+    std::cout << "(" << edge->name << " wt: " << edge->weight << ") [";
+    auto it = critical_paths.find(edge);
+    if (it == critical_paths.end()) {
+      std::cout << "none]" << std::endl;
+      continue;
+    }
+    Path *path = it->second;
+
+    for (auto &pair : *path) {
+      std::cout << pair.first->name();
+      if (pair.second != nullptr)
+        std::cout << " -> " << pair.second->name << " -> ";
+    }
+    std::cout << "]" << std::endl;
+  }
+
+  for (auto &path : complete)
+    delete path;
 }
 
 void Graph::AddInputEdges(
