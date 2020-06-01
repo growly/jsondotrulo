@@ -10,6 +10,7 @@ add_subdirectory(third_party)
 
 add_executable(jsondotrulo
                 src/main.cc
+                src/path.cc
                 src/graph.cc)
 
 target_include_directories(jsondotrulo PUBLIC

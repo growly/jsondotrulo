@@ -8,11 +8,10 @@
 #include <vector>
 
 #include "edge.h"
+#include "path.h"
 #include "vertex.h"
 
 namespace jsondotrulo {
-
-typedef std::vector<std::pair<Vertex*, Edge*>> Path;
 
 // This abstractly represents a self-contained graph, i.e. a model.
 // TODO(aryap): This owns its child objects and must delete them.
@@ -44,6 +43,7 @@ class Graph {
   // accordingly, I guess. TODO(aryap): Find the right weight-assignment
   // scheme.
   void WeightCombinatorialPaths() ;
+  void WeightCombinatorialPaths2() ;
 
   void Print() const;
 
@@ -68,9 +68,13 @@ class Graph {
   const std::string &name() const { return name_; }
 
  private:
-  static double ApproximateCost(const Path &path);
-
   Edge *FindOrCreateEdge(const std::string &name);
+
+  void UpdateEdgeWeightsForPath(
+      Path *path,
+      std::set<Path*> *critical_paths,
+      std::unordered_map<Edge*, Path*> *critical_path_by_edge,
+      bool *true_on_update);
 
   std::string name_;
   std::unordered_map<std::string, std::vector<Edge*>> inputs_;
@@ -82,14 +86,13 @@ class Graph {
   std::vector<Edge*> edges_;
   // All of the Edges, indexed by their name.
   std::unordered_map<std::string, Edge*> edges_by_name_;
+  // Edges by partition: if all vertices in/out of an edge are in a single
+  // partition, it is listed here. The '-1' partition means 'unpartitioned'.
+  std::map<int, std::set<Edge*>> edges_by_partition_;
 
   // Instances of other modules; these should be replaced with the contents of
   // those modules.
   std::vector<Vertex*> instances_;
-
-  // Edges by partition: if all vertices in/out of an edge are in a single
-  // partition, it is listed here. The '-1' partition means 'unpartitioned'.
-  std::map<int, std::set<Edge*>> edges_by_partition_;
 };
 
 

@@ -73,6 +73,8 @@ class Vertex {
   int partition() const { return partition_; }
   void set_partition(const int partition) { partition_ = partition; }
 
+  double Cost() const { return 1.0; }
+
   std::vector<Edge*> &in() { return in_; }
   const std::vector<Edge*> &in() const { return in_; }
 

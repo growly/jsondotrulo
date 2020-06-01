@@ -32,6 +32,8 @@ DEFINE_string(edge_list, "",
               " edge-list output will be provided.");
 DEFINE_bool(print, false, "Print details about the module graph.");
 DEFINE_bool(expand_instances, true, "Expand instance definitions.");
+DEFINE_bool(weight_edges, true,
+            "Find critical paths and use their lengths to weight edges.");
 
 // TODO(aryap): The ordering has to be deterministic between runs if we're just
 // going to ingest this metadata like this:
@@ -263,7 +265,9 @@ int main(int argc, char **argv) {
       top->Print();
     }
   }
-  top->WeightCombinatorialPaths();
+  if (FLAGS_weight_edges) {
+    top->WeightCombinatorialPaths2();
+  }
   // Graph object should now be complete. Write different formats now.
   // Except if we weren't given a --top argument, we probably want to avoid
   // the complications of writing the module name to the filename:
