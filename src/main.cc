@@ -266,7 +266,7 @@ int main(int argc, char **argv) {
     }
   }
   if (FLAGS_weight_edges) {
-    top->WeightCombinatorialPaths2();
+    top->WeightCombinatorialPaths();
   }
   // Graph object should now be complete. Write different formats now.
   // Except if we weren't given a --top argument, we probably want to avoid

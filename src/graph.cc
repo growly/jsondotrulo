@@ -361,7 +361,7 @@ void Graph::UpdateEdgeWeightsForPath(
 
 // Traverse the tree. At every node, record the longest path from that point.
 // This avoids repeating searches.
-void Graph::WeightCombinatorialPaths2() {
+void Graph::WeightCombinatorialPaths() {
   std::set<Path*> paths;
   std::unordered_map<Vertex*, Path*> descendant_by_vertex;
   std::unordered_map<Edge*, Path*> descendant_by_edge;
@@ -384,6 +384,8 @@ void Graph::WeightCombinatorialPaths2() {
       to_visit.push_back(std::make_pair(start_edge, start_path));
     }
   }
+
+  std::cout << "Finding paths between synchronous elements" << std::endl;
 
   while (!to_visit.empty()) {
     Edge *current = to_visit.back().first;
@@ -410,9 +412,6 @@ void Graph::WeightCombinatorialPaths2() {
       if (!defer_delete) delete final_path;
 
       // We're done with this edge now; move on.
-      std::cout << "continuing: edge " << current->name << " has known descendants w: "
-                << descendant_it->second->Cost() << "; "
-                << descendant_it->second->AsString() << std::endl;
       continue;
     }
 
@@ -442,15 +441,11 @@ void Graph::WeightCombinatorialPaths2() {
           vertex_max_cost = terminal_path->Cost();
         }
 
-        std::cout << "vertex "  << next_vertex->name()
-                  << " has known descendant path w: "
-                  << terminal_path->Cost()
-                  << " " << terminal_path->AsString() << std::endl;
-
         Path *final_path = new Path(*path);
         final_path->Append(*terminal_path);
 
         bool defer_delete = false;
+        ++num_found;
         UpdateEdgeWeightsForPath(final_path,
                                  &critical_paths,
                                  &critical_path_by_edge,
@@ -522,23 +517,13 @@ void Graph::WeightCombinatorialPaths2() {
         new_path->Append(std::make_pair(next_vertex, next_edge));
         paths.insert(new_path);
         to_visit.push_back(std::make_pair(next_edge, new_path));
-
-        std::cout << "expanding search to: ";
-        new_path->Print();
       }
 
       if (next_vertex_is_terminal && max_cost_edge_path != nullptr) {
-        std::cout << "vertex " << next_vertex->name()
-            << " has all-known descendants with longst path ";
         Path *terminal_path = new Path({next_vertex, max_cost_edge});
         terminal_path->Append(*max_cost_edge_path);
-        terminal_path->Print();
         descendant_by_vertex[next_vertex] = terminal_path;
       }
-    }
-
-    if (current->out.empty()) {
-      std::cout << "edge " << current->name << " has no out vertices" << std::endl;
     }
 
     if (current_edge_is_terminal && !current->out.empty()) {
@@ -549,169 +534,36 @@ void Graph::WeightCombinatorialPaths2() {
           new Path(std::pair<Vertex*, Edge*>{max_cost_vertex, nullptr}) :
           new Path(*max_cost_vertex_path);
       descendant_by_edge[current] = terminal_path;
-      std::cout << "edge " << current->name << " is terminal: ";
-      terminal_path->Print();
     }
 
     delete path;
   }
 
+  std::cout << "Found " << num_found << " paths" << std::endl;
+
   if (FLAGS_show_edge_longest_paths) {
     for (Edge *edge : edges_) {
-      std::cout << "(" << edge->name << " wt: " << edge->weight << ") [";
       auto it = critical_path_by_edge.find(edge);
       if (it == critical_path_by_edge.end()) {
+        std::cout << "(" << edge->name << " wt: " << edge->weight << ") [";
         std::cout << "none]" << std::endl;
         continue;
       }
       Path *path = it->second;
-      path->Print();
     }
 
     for (Path *path : critical_paths)
       delete path;
   }
 
-  // TODO(aryap): Delete descendant paths.
   for (const auto &pair : descendant_by_edge) {
-    std::cout << "longest descendant of edge " << pair.first->name
-              << " w: " << pair.second->Cost() << " "
-              << pair.second->AsString() << std::endl;
+    delete pair.second;
   }
 
   for (const auto &pair : descendant_by_vertex) {
-    std::cout << "longest descendant of vertex " << pair.first->name()
-              << " w: " << pair.second->Cost() << " "
-              << pair.second->AsString() << std::endl;
+    delete pair.second;
   }
 
-}
-
-// TODO(aryap): I'm an idiot.  This is stupid. We don't need to enumerate every
-// possible path between every two endpoints. We need to find the the longest
-// path between any two points once, which is why we need to use Floyd-Warshall
-// (again). Dijkstra/Floyd-Warshall would stop us repeating searching on
-// subgraphs that we'd already traversed, that's why this is stupid. I was
-// doing that before without considering longer alternatives.
-//
-//
-void Graph::WeightCombinatorialPaths() {
-  // The goal is to find every path from one flip flop to another flip flop,
-  // through whatever other vertices.
-
-  std::cout << "Finding paths between synchronous elements" << std::endl;
-
-  // Paths must be deleted at the end of this scope!
-  std::set<Path*> paths;
-  size_t num_found = 0;
-  size_t i = 0;
-  size_t update_interval =
-      std::max(vertices_.size() / 100, static_cast<size_t>(1));
-
-  std::set<Path*> critical_paths;
-  std::unordered_map<Edge*, Path*> critical_path_by_edge;
-
-  for (Vertex *start_vertex : vertices_) {
-    ++i;
-    if (i % update_interval == 0) {
-      std::cout << "Finding paths: " << i << "/" << vertices_.size()
-                << " start points checked; "
-                << num_found << " paths found" << std::endl;
-    }
-
-    if (!start_vertex->IsSynchronous()) continue;
-
-    for (Edge *start_edge : start_vertex->out()) {
-      Path *start_path = new Path{{start_vertex, start_edge}};
-      paths.insert(start_path);
-
-      std::vector<std::pair<Edge*, Path*>> to_visit;
-      to_visit.push_back(std::make_pair(start_edge, start_path));
-
-      // We do not care for the other drivers of the same net. Presumably they
-      // are not on the path.
-      while (!to_visit.empty()) {
-        Edge *current = to_visit.back().first;
-        Path *path = to_visit.back().second;
-        to_visit.pop_back();
-
-        bool defer_delete = false;
-
-        for (Vertex *next_vertex : current->out) {
-          if (path->ContainsVertex(next_vertex))
-            continue;
-
-          // Paths end at flip-flops.
-          if (next_vertex->IsSynchronous()) {
-            Path *final_path = new Path(*path);
-            assert(!final_path->ContainsVertex(next_vertex));
-            final_path->Append(
-                std::make_pair(next_vertex, nullptr));
-
-            // It takes too much memory to save these, so we process them now
-            // and move on. Unless we have to.
-            ++num_found;
-            double path_cost = final_path->Cost();
-
-            for (auto &pair : *final_path) {
-              Edge *edge = pair.second;
-              if (edge == nullptr) continue;
-
-              if (path_cost >= edge->weight) {
-                edge->weight = path_cost;
-                critical_path_by_edge[edge] = final_path;
-                critical_paths.insert(final_path);
-                defer_delete = true;
-              }
-            }
-
-            // Unless we're doing some intense admin work, we delete the path
-            // now that we're done with it.
-            if (!FLAGS_show_edge_longest_paths || !defer_delete)
-              delete final_path;
-            continue;
-          }
-
-          // If the path-so-far isn't ending, extend a copy of the path with
-          // the next edge to follow.
-          for (Edge *next_edge : next_vertex->out()) {
-            // Don't add a duplicate edge to the path.
-            if (path->ContainsEdge(next_edge))
-              continue;
-            // Create a new path for the each next-hop.
-            Path *new_path = new Path(*path);
-
-            new_path->Append(std::make_pair(next_vertex, next_edge));
-            paths.insert(new_path);
-            to_visit.push_back(std::make_pair(next_edge, new_path));
-
-            if (start_vertex->name() == FLAGS_trace_paths_for)
-              new_path->Print();
-          }
-        }
-
-        delete path;
-      }
-    }
-  }
-
-  std::cout << "Finding paths: done" << std::endl;
-
-  if (FLAGS_show_edge_longest_paths) {
-    for (Edge *edge : edges_) {
-      std::cout << "(" << edge->name << " wt: " << edge->weight << ") [";
-      auto it = critical_path_by_edge.find(edge);
-      if (it == critical_path_by_edge.end()) {
-        std::cout << "none]" << std::endl;
-        continue;
-      }
-      Path *path = it->second;
-      path->Print();
-    }
-
-    for (Path *path : critical_paths)
-      delete path;
-  }
 }
 
 void Graph::AddInputEdges(
@@ -1027,7 +879,7 @@ std::string Graph::AsEdgeListWithWeights() const {
       for (const Vertex *out : edge->out) {
         std::string line = in->name() + " " + out->name() + " "
                            + std::to_string(edge->weight) + "\n";
-        std::cout << "edge: " << edge->name << " w: " << line;
+        //std::cout << "edge: " << edge->name << " w: " << line;
         repr += line;
       }
   return repr;

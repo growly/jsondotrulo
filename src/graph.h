@@ -43,7 +43,6 @@ class Graph {
   // accordingly, I guess. TODO(aryap): Find the right weight-assignment
   // scheme.
   void WeightCombinatorialPaths() ;
-  void WeightCombinatorialPaths2() ;
 
   void Print() const;
 
