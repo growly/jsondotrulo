@@ -1,6 +1,7 @@
 #ifndef _PATH_H_
 #define _PATH_H_
 
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
@@ -14,15 +15,25 @@ struct Edge;
 class Path {
  public:
   Path() {}
-  Path(const std::pair<Vertex*, Edge*> start) {
+  Path(const std::pair<Vertex*, Edge*> start)
+    : source_(nullptr),
+      num_edges_for_which_critical_(0) {
     Append(start);
   }
+
+  Path(std::shared_ptr<const Path> source)
+    : source_(source),
+      num_edges_for_which_critical_(0) {}
+
   Path(const Path &other)
       : hops_(other.hops_.begin(), other.hops_.end()),
-        vertices_(other.vertices_.begin(), other.vertices_.end()),
-        edges_(other.edges_.begin(), other.edges_.end()) {
+        source_(other.source_),
+        num_edges_for_which_critical_(0) {
   }
-  ~Path() = default;
+
+  ~Path() {
+    //std::cout << "path deleted: " << AsString() << std::endl;
+  }
 
   void Append(const std::pair<Vertex*, Edge*> &hop);
 
@@ -31,6 +42,7 @@ class Path {
   double Cost() const;
 
   std::string AsString() const;
+  std::string AsString(bool print_final) const;
 
   void Print() const;
 
@@ -59,13 +71,30 @@ class Path {
   bool ContainsVertex(Vertex *vertex) const;
   bool ContainsEdge(Edge *edge) const;
 
+  void IncrementNumEdgesForWhichCritical() {
+    num_edges_for_which_critical_++;
+  }
+
+  void DecrementNumEdgesForWhichCritical() {
+    num_edges_for_which_critical_--;
+  }
+
+  size_t num_edges_for_which_critical() {
+    return num_edges_for_which_critical_;
+  }
+
  private:
   std::vector<std::pair<Vertex*, Edge*>> hops_;
 
-  // This structures help us prevent loops faster, by reducing the search time
-  // when checking for loops.
-  std::set<Vertex*> vertices_;
-  std::set<Edge*> edges_;
+  // Paths are pretty short, so we can afford an O(n) search to avoid the
+  // memory-footprint of a log(n) search structure (such as additional sets).
+ 
+  // Sourth Path, if any. This path is treated as part of this path, so is
+  // recursively searched for elements and counts towards this Path's length, if
+  // any.
+  std::shared_ptr<const Path> source_;
+
+  size_t num_edges_for_which_critical_;
 };
 
 } // namespace jsondotrulo

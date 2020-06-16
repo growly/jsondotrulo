@@ -17,9 +17,12 @@ target_include_directories(jsondotrulo PUBLIC
                            "${PROJECT_BINARY_DIR}/src"
                            )
 
-target_link_libraries(jsondotrulo PRIVATE nlohmann_json::nlohmann_json)
-target_link_libraries(jsondotrulo PUBLIC gflags::gflags)
+find_library(tcmalloc_lib NAMES tcmalloc REQUIRED)
+message(STATUS ${tcmalloc_lib})
 
+target_link_libraries(jsondotrulo PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(jsondotrulo PUBLIC ${tcmalloc_lib}
+                                         gflags::gflags)
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED true)

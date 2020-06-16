@@ -31,9 +31,10 @@ DEFINE_string(edge_list, "",
               "Path to prefix for edge-list file to write. If empty, no"
               " edge-list output will be provided.");
 DEFINE_bool(print, false, "Print details about the module graph.");
-DEFINE_bool(expand_instances, true, "Expand instance definitions.");
+DEFINE_bool(expand_instances, true, "Elaborate instance definitions.");
 DEFINE_bool(weight_edges, true,
             "Find critical paths and use their lengths to weight edges.");
+DEFINE_bool(sanity_checks, false, "Perform sanity checks.");
 
 // TODO(aryap): The ordering has to be deterministic between runs if we're just
 // going to ingest this metadata like this:
@@ -155,6 +156,7 @@ int main(int argc, char **argv) {
         for (const auto &cells_json_it : module_json.value()["cells"].items()) {
           std::unordered_map<std::string, std::vector<std::string>> in_ports;
           std::unordered_map<std::string, std::vector<std::string>> out_ports;
+          const std::string &cell_name = cells_json_it.key();
           const auto &cells_json = cells_json_it.value();
           // Have to find connections with type "input" or "output":
           for (const auto &port_json : cells_json["connections"].items()) {
@@ -191,7 +193,7 @@ int main(int argc, char **argv) {
                       << std::endl;
           }
             
-          g->AddVertex(type, in_ports, out_ports, cell_type);
+          g->AddVertex(type, in_ports, out_ports, cell_type, cell_name);
         }
       }
       // Find input and output ports. Each port's name is a key, and the object
@@ -264,6 +266,9 @@ int main(int argc, char **argv) {
     if (FLAGS_print) {
       top->Print();
     }
+  }
+  if (FLAGS_sanity_checks) {
+    top->FindStrangeLUTs();
   }
   if (FLAGS_weight_edges) {
     top->WeightCombinatorialPaths();

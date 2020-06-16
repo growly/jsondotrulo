@@ -21,7 +21,9 @@ void Path::Append(const Path &path) {
 }
 
 double Path::Cost() const {
-  return hops_.size();
+  double cost = hops_.size();
+  if (source_) cost += source_->Cost();
+  return cost;
 }
 
 bool Path::PenultimateHop(std::pair<Vertex*, Edge*> *hop) {
@@ -31,21 +33,36 @@ bool Path::PenultimateHop(std::pair<Vertex*, Edge*> *hop) {
 }
 
 bool Path::ContainsVertex(Vertex *vertex) const {
-  return vertices_.find(vertex) != vertices_.end();
+  assert(vertex != nullptr);
+  if (source_ && source_->ContainsVertex(vertex)) return true;
+  for (const auto &hop : hops_)
+    if (hop.first == vertex)
+      return true;
+  return false;
 }
 
 bool Path::ContainsEdge(Edge *edge) const {
-  return edges_.find(edge) != edges_.end();
+  assert(edge != nullptr);
+  if (source_ && source_->ContainsEdge(edge)) return true;
+  for (const auto &hop : hops_)
+    if (hop.second == edge)
+      return true;
+  return false;
 }
 
 std::string Path::AsString() const {
-  std::string repr = "[";
+  return AsString(true);
+}
+
+std::string Path::AsString(bool print_final) const {
+  std::string repr;
+  if (source_) repr += source_->AsString(false);
   for (auto &pair : hops_) {
-    repr += pair.first->name();
     if (pair.second != nullptr)
-      repr += " -> " + pair.second->name + " -> ";
+      repr += pair.first->name() + " -> " + pair.second->name + " -> ";
+    else if (print_final)
+      repr += pair.first->name();
   }
-  repr += "]";
   return repr;
 }
 

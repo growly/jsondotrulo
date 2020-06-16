@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <memory>
 #include <set>
 #include <sstream>
 #include <unordered_map>
@@ -50,10 +51,12 @@ void Graph::AddVertex(
           &input_edges,
       const std::unordered_map<std::string, std::vector<std::string>>
           &output_edges,
-      const std::string &instance_of) {
+      const std::string &instance_of,
+      const std::string &original_cell_name) {
   size_t vertex_index = vertices_.size();
   Vertex *vertex = new Vertex(vertex_index, type);
   vertex->set_instance_of(instance_of);
+  vertex->set_original_cell_name(original_cell_name);
   vertex->GenerateName();
   for (const auto &input_it : input_edges) {
     const std::string &port = input_it.first;
@@ -116,6 +119,7 @@ void Graph::ExpandInstances(
       // whatever.
       std::string new_edge_name = instance->name() + "." + old_edge->name;
       Edge *new_edge = FindOrCreateEdge(new_edge_name);
+      assert(edge_map.find(old_edge) == edge_map.end());
       edge_map[old_edge] = new_edge;
       //std::cout << new_edge_name << " created " << new_edge << std::endl;
     }
@@ -129,6 +133,7 @@ void Graph::ExpandInstances(
       size_t new_index = vertices_.size();
       Vertex *new_vertex = new Vertex(new_index, old_vertex->type());
       new_vertex->set_instance_of(old_vertex->instance_of());
+      new_vertex->set_original_cell_name(old_vertex->original_cell_name());
       new_vertex->GenerateName();
       if (new_vertex->type() == VertexType::MODULE)
         instances_.push_back(new_vertex);
@@ -149,11 +154,12 @@ void Graph::ExpandInstances(
       for (Edge *old_in_edge : old_vertex->in()) {
         auto edge_map_it = edge_map.find(old_in_edge);
         // There should be a 1:1 correspondence of old and new edges!
-        assert(edge_map_it != edge_map.end());
         Edge *new_edge = edge_map_it->second;
-        //std::cout << "v " << new_vertex << " (" << new_vertex->name() << ") added to " << new_edge << " " << new_edge->name << std::endl;
         new_edge->out.insert(new_vertex);
         new_vertex->in().push_back(new_edge);
+        if (new_vertex->original_cell_name() == "$abc$64706$auto$blifparse.cc:498:parse_blif$64786") {
+          std::cout << "v " << new_vertex << " (" << new_vertex->name() << ") added to " << new_edge << " " << new_edge->name << std::endl;
+        }
       }
       vertices_.push_back(new_vertex);
     }
@@ -205,6 +211,8 @@ void Graph::ExpandInstances(
         external->in.insert(internal->in.begin(), internal->in.end());
         external->out.insert(internal->out.begin(), internal->out.end());
         
+        assert(std::find(edges_.begin(), edges_.end(), external) != edges_.end());
+        
         // Replace every occurrence of the temporary internal edge - at the
         // vertices which are both inputs and outputs to the edge - with the
         // external edge subsuming it.
@@ -225,6 +233,10 @@ void Graph::ExpandInstances(
         edges_to_delete.insert(internal);
       }
     }
+
+    // FIXME(aryap): Ok, when an input connects directly to an output, it goes
+    // through both these processes. The first clears its inputs/outputs. We
+    // need to be merging the input and output external edges.
 
     // TODO(aryap): Refactor this and the above stanza into a separate
     // function.
@@ -272,6 +284,7 @@ void Graph::ExpandInstances(
         external->in.insert(internal->in.begin(), internal->in.end());
         external->out.insert(internal->out.begin(), internal->out.end());
         
+        assert(std::find(edges_.begin(), edges_.end(), external) != edges_.end());
         
         for (Vertex *vertex : internal->in) {
         //  std::cout << "[outputs] replacing e " << internal << "  with e " << external
@@ -303,11 +316,9 @@ void Graph::ExpandInstances(
     for (size_t i = 0; i < vertices_.size(); ++i) {
       vertices_[i]->set_index(i);
       // TODO(aryap): Should Vertices be renamed?
-      //vertices_[i]->GenerateName();
     }
 
     for (Edge *edge : edges_to_delete) {
-      //std::cout << "deleting e " << edge << " " << edge->name << std::endl;
       assert(edge->in.empty());
       assert(edge->out.empty());
 
@@ -345,16 +356,26 @@ void Graph::UpdateEdgeWeightsForPath(
     Path *path,
     std::set<Path*> *critical_paths,
     std::unordered_map<Edge*, Path*> *critical_path_by_edge,
-    bool *true_on_update) {
+    bool *path_was_used) {
   double path_cost = path->Cost();
   for (auto &pair : *path) {
     Edge *edge = pair.second;
     if (edge == nullptr) continue;
     if (path_cost >= edge->weight) {
       edge->weight = path_cost;
+      auto iter = critical_path_by_edge->find(edge);
+      if (iter != critical_path_by_edge->end()) {
+        Path *old_critical = iter->second;
+        old_critical->DecrementNumEdgesForWhichCritical();
+        if (old_critical->num_edges_for_which_critical() == 0) {
+          critical_paths->erase(old_critical);
+          delete old_critical;
+        }
+      }
       (*critical_path_by_edge)[edge] = path;
+      path->IncrementNumEdgesForWhichCritical();
       critical_paths->insert(path);
-      if (true_on_update != nullptr) *true_on_update = true;
+      if (path_was_used != nullptr) *path_was_used = true;
     }
   }
 }
@@ -362,7 +383,7 @@ void Graph::UpdateEdgeWeightsForPath(
 // Traverse the tree. At every node, record the longest path from that point.
 // This avoids repeating searches.
 void Graph::WeightCombinatorialPaths() {
-  std::set<Path*> paths;
+  //std::set<Path*> paths;
   std::unordered_map<Vertex*, Path*> descendant_by_vertex;
   std::unordered_map<Edge*, Path*> descendant_by_edge;
 
@@ -373,13 +394,15 @@ void Graph::WeightCombinatorialPaths() {
   
   size_t num_found = 0;
 
+  size_t max_capacity_among_paths = 0;
+
   // Seed start paths.
   for (Vertex *start_vertex : vertices_) {
     if (!start_vertex->IsSynchronous()) continue;
 
     for (Edge *start_edge : start_vertex->out()) {
       Path *start_path = new Path{{start_vertex, start_edge}};
-      paths.insert(start_path);
+      //paths.insert(start_path);
 
       to_visit.push_back(std::make_pair(start_edge, start_path));
     }
@@ -387,9 +410,19 @@ void Graph::WeightCombinatorialPaths() {
 
   std::cout << "Finding paths between synchronous elements" << std::endl;
 
+  long long i = 0;
   while (!to_visit.empty()) {
+    if (++i % 1000 == 0)
+        std::cout << i << ", "
+                  << descendant_by_vertex.size() << ", "
+                  << descendant_by_edge.size() << ", "
+                  << critical_paths.size() << std::endl;
+
     Edge *current = to_visit.back().first;
-    Path *path = to_visit.back().second;
+
+    // This is the search path. Before it is used in a completed form as a
+    // 'critical path', it is copied and a final hop is added.
+    std::shared_ptr<Path> path(to_visit.back().second);
     to_visit.pop_back();
 
     if (path->front().first->name() == FLAGS_trace_paths_for) {
@@ -400,7 +433,7 @@ void Graph::WeightCombinatorialPaths() {
     if (descendant_it != descendant_by_edge.end()) {
       // We already have the longest descendant for this edge, so we can
       // assemble the longest path through it.
-      Path *final_path = new Path(*path);
+      Path *final_path = new Path(path);
       final_path->Append(*descendant_it->second);
 
       // Update edge weights.
@@ -409,12 +442,18 @@ void Graph::WeightCombinatorialPaths() {
                                &critical_paths,
                                &critical_path_by_edge,
                                &defer_delete);
-      if (!defer_delete) delete final_path;
+      if (!defer_delete) {
+        delete final_path;
+      }
 
       // We're done with this edge now; move on.
       continue;
     }
 
+    // False if this edge leads to new search paths. If true, the edge leads to
+    // only synchronous elements or non-synchronous elements whose
+    // descendant-paths have been visited. This is used to keep track of
+    // visited subgraphs.
     bool current_edge_is_terminal = true;
 
     double vertex_max_cost = -1.0;
@@ -425,9 +464,38 @@ void Graph::WeightCombinatorialPaths() {
     Path *max_cost_vertex_path = nullptr;
 
     for (Vertex *next_vertex : current->out) {
-      // Ignore loops.
-      if (path->ContainsVertex(next_vertex))
+      // Paths end at flip-flops and latches and such.
+      if (next_vertex->IsSynchronous()) {
+        if (next_vertex->Cost() > vertex_max_cost) {
+          max_cost_vertex_path = nullptr;
+          max_cost_vertex = next_vertex;
+          vertex_max_cost = next_vertex->Cost();
+        }
+
+        bool defer_delete = false;
+        Path *final_path = new Path(path);
+
+        // Critical paths can be loops if they start and end at the same place
+        // (as oppposed to contained a loop of combinational elements in the
+        // middle), so we don't check if next_vertex is already contained here.
+        final_path->Append(std::make_pair(next_vertex, nullptr));
+
+        // It takes too much memory to save these, so we process them now and
+        // move on. Unless we have to.
+        ++num_found;
+
+        UpdateEdgeWeightsForPath(final_path,
+                                 &critical_paths,
+                                 &critical_path_by_edge,
+                                 &defer_delete);
+
+        // Unless we're doing some intense admin work, we delete the path
+        // now that we're done with it.
+        if (!FLAGS_show_edge_longest_paths || !defer_delete) {
+          delete final_path;
+        }
         continue;
+      }
 
       // If the cost of the subgraph below this vertex is already known, use
       // it.
@@ -441,7 +509,7 @@ void Graph::WeightCombinatorialPaths() {
           vertex_max_cost = terminal_path->Cost();
         }
 
-        Path *final_path = new Path(*path);
+        Path *final_path = new Path(path);
         final_path->Append(*terminal_path);
 
         bool defer_delete = false;
@@ -450,41 +518,27 @@ void Graph::WeightCombinatorialPaths() {
                                  &critical_paths,
                                  &critical_path_by_edge,
                                  &defer_delete);
-        if (!defer_delete) delete final_path;
+        if (!defer_delete) {
+          delete final_path;
+        }
         continue;
       }
+
+      // Ignore combinational loops.
+      if (path->ContainsVertex(next_vertex)) {
+        std::cout << "Path contains combinational loop: vertex "
+                  << next_vertex->name() << " is in " << path->AsString()
+                  << std::endl;
+        continue;
+      }
+
+      current_edge_is_terminal = false;
 
       if (next_vertex->Cost() > vertex_max_cost) {
         max_cost_vertex_path = nullptr;
         max_cost_vertex = next_vertex;
         vertex_max_cost = next_vertex->Cost();
       }
-
-      // Paths end at flip-flops and latches and such.
-      if (next_vertex->IsSynchronous()) {
-        bool defer_delete = false;
-        Path *final_path = new Path(*path);
-        assert(!final_path->ContainsVertex(next_vertex));
-        final_path->Append(
-            std::make_pair(next_vertex, nullptr));
-
-        // It takes too much memory to save these, so we process them now and
-        // move on. Unless we have to.
-        ++num_found;
-
-        UpdateEdgeWeightsForPath(final_path,
-                                 &critical_paths,
-                                 &critical_path_by_edge,
-                                 &defer_delete);
-
-        // Unless we're doing some intense admin work, we delete the path
-        // now that we're done with it.
-        if (!FLAGS_show_edge_longest_paths || !defer_delete)
-          delete final_path;
-        continue;
-      }
-
-      current_edge_is_terminal = false;
 
       // If the path-so-far isn't ending, extend a copy of the path with
       // the next edge to follow.
@@ -512,10 +566,10 @@ void Graph::WeightCombinatorialPaths() {
         if (path->ContainsEdge(next_edge))
           continue;
         // Create a new path for the each next-hop.
-        Path *new_path = new Path(*path);
+        Path *new_path = new Path(path);
 
         new_path->Append(std::make_pair(next_vertex, next_edge));
-        paths.insert(new_path);
+        //paths.insert(new_path);
         to_visit.push_back(std::make_pair(next_edge, new_path));
       }
 
@@ -530,13 +584,18 @@ void Graph::WeightCombinatorialPaths() {
       // All of the vertices out of this edge are terminal, so record the
       // longest descendant. At this point we need to find the highest-cost
       // final node and use that as the terminal node.
+
+      // If we haven't found the max-cost-vertex, that's bad...
+      assert(max_cost_vertex != nullptr);
+
       Path *terminal_path = max_cost_vertex_path == nullptr ?
           new Path(std::pair<Vertex*, Edge*>{max_cost_vertex, nullptr}) :
           new Path(*max_cost_vertex_path);
       descendant_by_edge[current] = terminal_path;
     }
 
-    delete path;
+    // The path shared_ptr should now leave scope and continue on its journey
+    // to destruction.
   }
 
   std::cout << "Found " << num_found << " paths" << std::endl;
@@ -563,7 +622,6 @@ void Graph::WeightCombinatorialPaths() {
   for (const auto &pair : descendant_by_vertex) {
     delete pair.second;
   }
-
 }
 
 void Graph::AddInputEdges(
@@ -632,6 +690,27 @@ void Graph::ReadHMETISPartitions(const std::string &in_str) {
     edge->partition = partition;
     edges_by_partition_[partition].insert(edge);
   }
+}
+
+void Graph::FindStrangeLUTs() const {
+  std::vector<const Vertex*> no_ins;
+  std::vector<const Vertex*> no_outs;
+  for (const Vertex *vertex : vertices_) {
+    if (vertex->type() != VertexType::LUT) continue;
+    if (vertex->in().empty()) no_ins.push_back(vertex);
+    if (vertex->out().empty()) no_outs.push_back(vertex);
+  }
+
+  std::cout << "LUTs with no inputs: " << std::endl;
+  for (const Vertex *vertex : no_ins)
+    std::cout << "  " << vertex->name()
+              << " (" << vertex->original_cell_name() << ")" << std::endl;
+
+  std::cout << "LUTs with no outputs: " << std::endl;
+  for (const Vertex *vertex : no_outs)
+    std::cout << "  " << vertex->name()
+              << " (" << vertex->original_cell_name() << ")" << std::endl;
+
 }
 
 void Graph::Print() const {
@@ -874,14 +953,17 @@ std::string Graph::AsGraph6() const {
 
 std::string Graph::AsEdgeListWithWeights() const {
   std::string repr;
-  for (const Edge *edge : edges_)
+  for (const Edge *edge : edges_) {
+    std::cout << edge->name << std::endl;
     for (const Vertex *in : edge->in)
       for (const Vertex *out : edge->out) {
         std::string line = in->name() + " " + out->name() + " "
                            + std::to_string(edge->weight) + "\n";
-        //std::cout << "edge: " << edge->name << " w: " << line;
+        //std::cout << "edge: " << edge->name << " " << in->original_cell_name()
+        //          << " " << out->original_cell_name() << " w: " << line;
         repr += line;
       }
+  }
   return repr;
 }
 

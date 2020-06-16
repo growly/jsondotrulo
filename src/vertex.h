@@ -98,6 +98,11 @@ class Vertex {
     instance_of_ = instance_of;
   }
 
+  const std::string &original_cell_name() const { return original_cell_name_; }
+  void set_original_cell_name(const std::string &original_cell_name) {
+    original_cell_name_ = original_cell_name;
+  }
+
  private:
   std::string name_;
   size_t index_;
@@ -109,6 +114,7 @@ class Vertex {
   double weight_;
   VertexType type_;
   std::string instance_of_;
+  std::string original_cell_name_;
 };
 
 } // namespace jsondotrulo

@@ -34,7 +34,8 @@ class Graph {
             &input_edges,
         const std::unordered_map<std::string, std::vector<std::string>>
             &output_edges,
-        const std::string &instance_of);
+        const std::string &instance_of,
+        const std::string &original_cell_name);
 
   void ExpandInstances(
       const std::unordered_map<std::string, Graph*> &modules_by_name);
@@ -42,7 +43,11 @@ class Graph {
   // Finds all paths between synchronous elements (flip flops). Assigns weights
   // accordingly, I guess. TODO(aryap): Find the right weight-assignment
   // scheme.
-  void WeightCombinatorialPaths() ;
+  void WeightCombinatorialPaths();
+
+  // More generally we might want to do some sanity checking. In this example,
+  // we find LUTs with no inputs or with no outputs.
+  void FindStrangeLUTs() const;
 
   void Print() const;
 
