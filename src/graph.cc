@@ -157,9 +157,6 @@ void Graph::ExpandInstances(
         Edge *new_edge = edge_map_it->second;
         new_edge->out.insert(new_vertex);
         new_vertex->in().push_back(new_edge);
-        if (new_vertex->original_cell_name() == "$abc$64706$auto$blifparse.cc:498:parse_blif$64786") {
-          std::cout << "v " << new_vertex << " (" << new_vertex->name() << ") added to " << new_edge << " " << new_edge->name << std::endl;
-        }
       }
       vertices_.push_back(new_vertex);
     }
@@ -198,45 +195,33 @@ void Graph::ExpandInstances(
         // Remove the instance vertex (the one of type MODULE that is to
         // expanded into the full module); replace it with the internal vertex
         // within the graph to which that edge would connect.
-        //std::cout << "internal e " << internal << std::endl;
-        //std::cout << "[inputs] vertex" <<  instance << " (" << instance->name() << ") being removed from edge "
-        //          << external << " (" << external->name << ") " << std::endl;
-
         size_t erased = external->out.erase(instance);
+
         // Since external->out is a set but we track multiple connections to
         // the same net through a vector in the input list, this may be
         // redundant on successive iterations.
    
         // Merge the input/output sets between the internal/external edge.
-        external->in.insert(internal->in.begin(), internal->in.end());
-        external->out.insert(internal->out.begin(), internal->out.end());
+        //
+        // NOTE: We will keep the INTERNAL edge, since that should elegantly
+        // handle the case where an external input is connected to an external
+        // output through an internal edge.
+        internal->in.insert(external->in.begin(), external->in.end());
+        internal->out.insert(external->out.begin(), external->out.end());
         
-        assert(std::find(edges_.begin(), edges_.end(), external) != edges_.end());
-        
-        // Replace every occurrence of the temporary internal edge - at the
-        // vertices which are both inputs and outputs to the edge - with the
-        // external edge subsuming it.
-        for (Vertex *vertex : internal->in) {
-          // There might be multiple connections to this edge!
-          //std::cout << "[inputs] replacing e " << internal << "  with e " << external
-          //          << " on v " << vertex << std::endl;
-          std::replace(vertex->in().begin(), vertex->in().end(), internal, external);
+        // Replace every occurrence of the external edge - at the vertices
+        // which are both inputs and outputs to the edge - with the internal
+        // edge subsuming it.
+        for (Vertex *vertex : external->in) {
+          std::replace(vertex->out().begin(), vertex->out().end(), external, internal);
         }
-        for (Vertex *vertex : internal->out) {
+        for (Vertex *vertex : external->out) {
           // There might be multiple connections to this edge!
-          //std::cout << "[inputs] replacing e " << internal << "  with e " << external
-          //          << " on v " << vertex << std::endl;
-          std::replace(vertex->in().begin(), vertex->in().end(), internal, external);
+          std::replace(vertex->in().begin(), vertex->in().end(), external, internal);
         }
-        internal->in.clear();
-        internal->out.clear();
-        edges_to_delete.insert(internal);
+        edges_to_delete.insert(external);
       }
     }
-
-    // FIXME(aryap): Ok, when an input connects directly to an output, it goes
-    // through both these processes. The first clears its inputs/outputs. We
-    // need to be merging the input and output external edges.
 
     // TODO(aryap): Refactor this and the above stanza into a separate
     // function.
@@ -255,7 +240,6 @@ void Graph::ExpandInstances(
       const std::string &port_name = pair.first;
       std::vector<Edge*> &instance_outputs = pair.second;
 
-      // Find corresponding edges in master Graph for this instance.
       auto master_outputs_it = master->outputs_.find(port_name);
       if (master_outputs_it == master->outputs_.end()) {
         std::cerr << "Error! Port " << port_name << " of instance vertex "
@@ -272,33 +256,18 @@ void Graph::ExpandInstances(
         assert(internal_edge_it != edge_map.end());
         Edge *internal = internal_edge_it->second;
 
-        // Remove the instance vertex (the one of type MODULE that is to
-        // expanded into the full module); replace it with the internal vertex
-        // within the graph to which that edge would connect.
-        //std::cout << "internal e " << internal << std::endl;
-        //std::cout << "[outputs] vertex" <<  instance << " (" << instance->name() << ") being removed from edge "
-        //          << external << " (" << external->name << ") " << std::endl;
         size_t erased = external->in.erase(instance);
 
-        // Merge the input/output sets between the internal/external edge.
-        external->in.insert(internal->in.begin(), internal->in.end());
-        external->out.insert(internal->out.begin(), internal->out.end());
+        internal->in.insert(external->in.begin(), external->in.end());
+        internal->out.insert(external->out.begin(), external->out.end());
         
-        assert(std::find(edges_.begin(), edges_.end(), external) != edges_.end());
-        
-        for (Vertex *vertex : internal->in) {
-        //  std::cout << "[outputs] replacing e " << internal << "  with e " << external
-        //            << " on v " << vertex << std::endl;
-          std::replace(vertex->out().begin(), vertex->out().end(), internal, external);
+        for (Vertex *vertex : external->in) {
+          std::replace(vertex->out().begin(), vertex->out().end(), external, internal);
         }
-        for (Vertex *vertex : internal->out) {
-        //  std::cout << "[outputs] replacing e " << internal << "  with e " << external
-        //            << " on v " << vertex << std::endl;
-          std::replace(vertex->in().begin(), vertex->in().end(), internal, external);
+        for (Vertex *vertex : external->out) {
+          std::replace(vertex->in().begin(), vertex->in().end(), external, internal);
         }
-        internal->in.clear();
-        internal->out.clear();
-        edges_to_delete.insert(internal);
+        edges_to_delete.insert(external);
       }
     }
 
@@ -318,9 +287,10 @@ void Graph::ExpandInstances(
       // TODO(aryap): Should Vertices be renamed?
     }
 
+    // Remove any record of the edge from the Graph.
     for (Edge *edge : edges_to_delete) {
-      assert(edge->in.empty());
-      assert(edge->out.empty());
+      //assert(edge->in.empty());
+      //assert(edge->out.empty());
 
       auto edges_by_name_it = edges_by_name_.find(edge->name);
       assert(edges_by_name_it != edges_by_name_.end());
@@ -432,9 +402,13 @@ void Graph::WeightCombinatorialPaths() {
     auto descendant_it = descendant_by_edge.find(current);
     if (descendant_it != descendant_by_edge.end()) {
       // We already have the longest descendant for this edge, so we can
-      // assemble the longest path through it.
+      // assemble the longest path through it, or we can ignore it.
+      Path *longest_descendant = descendant_it->second;
+      if (longest_descendant == nullptr)
+        continue;
+
       Path *final_path = new Path(path);
-      final_path->Append(*descendant_it->second);
+      final_path->Append(*longest_descendant);
 
       // Update edge weights.
       bool defer_delete = false;
@@ -527,8 +501,8 @@ void Graph::WeightCombinatorialPaths() {
       // Ignore combinational loops.
       if (path->ContainsVertex(next_vertex)) {
         std::cout << "Path contains combinational loop: vertex "
-                  << next_vertex->name() << " is in " << path->AsString()
-                  << std::endl;
+                  << next_vertex->name() << " is already in "
+                  << path->AsString() << std::endl;
         continue;
       }
 
@@ -553,6 +527,9 @@ void Graph::WeightCombinatorialPaths() {
         descendant_it = descendant_by_edge.find(next_edge);
         if (descendant_it == descendant_by_edge.end()) {
           next_vertex_is_terminal = false;
+        } else if (descendant_it->second == nullptr) {
+          // This edge is known to go nowhere.
+          continue;
         } else {
           Path *descendant_path = descendant_it->second;
           if (descendant_path->Cost() > edge_max_cost) {
@@ -574,23 +551,27 @@ void Graph::WeightCombinatorialPaths() {
       }
 
       if (next_vertex_is_terminal && max_cost_edge_path != nullptr) {
+        assert(max_cost_edge != nullptr);
         Path *terminal_path = new Path({next_vertex, max_cost_edge});
         terminal_path->Append(*max_cost_edge_path);
         descendant_by_vertex[next_vertex] = terminal_path;
       }
     }
 
-    if (current_edge_is_terminal && !current->out.empty()) {
-      // All of the vertices out of this edge are terminal, so record the
-      // longest descendant. At this point we need to find the highest-cost
-      // final node and use that as the terminal node.
+    if (current_edge_is_terminal) {
+      // None of the vertices out of this edge led to new search paths, so it's
+      // 'terminal'. Record the longest descendant. At this point we need to
+      // find the highest-cost final node and use that as the terminal node.
+      Path *terminal_path = nullptr;
+      if (max_cost_vertex != nullptr) {
+        assert(!current->out.empty());
+        terminal_path = max_cost_vertex_path == nullptr ?
+            new Path(std::pair<Vertex*, Edge*>{max_cost_vertex, nullptr}) :
+            new Path(*max_cost_vertex_path);
+      }
 
-      // If we haven't found the max-cost-vertex, that's bad...
-      assert(max_cost_vertex != nullptr);
-
-      Path *terminal_path = max_cost_vertex_path == nullptr ?
-          new Path(std::pair<Vertex*, Edge*>{max_cost_vertex, nullptr}) :
-          new Path(*max_cost_vertex_path);
+      // A nullptr entry means that the edge leads nowhere. Otherwise, the
+      // longest descendant path is recorded.
       descendant_by_edge[current] = terminal_path;
     }
 
@@ -954,11 +935,11 @@ std::string Graph::AsGraph6() const {
 std::string Graph::AsEdgeListWithWeights() const {
   std::string repr;
   for (const Edge *edge : edges_) {
-    std::cout << edge->name << std::endl;
+    //std::cout << edge->name << std::endl;
     for (const Vertex *in : edge->in)
       for (const Vertex *out : edge->out) {
-        std::string line = in->name() + " " + out->name() + " "
-                           + std::to_string(edge->weight) + "\n";
+        std::string line = in->name() + " " + out->name() + " " +
+                           std::to_string(edge->weight) + "\n";
         //std::cout << "edge: " << edge->name << " " << in->original_cell_name()
         //          << " " << out->original_cell_name() << " w: " << line;
         repr += line;
