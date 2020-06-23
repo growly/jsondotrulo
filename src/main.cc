@@ -13,6 +13,7 @@
 #include "edge.h"
 
 #include <gflags/gflags.h>
+#include <glog/logging.h>
 #include <nlohmann/json.hpp>
 
 DEFINE_string(dot_file, "",
@@ -103,7 +104,7 @@ void GuessTop(
       }
     }
 
-    std::cout << "Module " << root->name() << " has " << all_children.size()
+    LOG(INFO) << "Module " << root->name() << " has " << all_children.size()
               << " children" << std::endl;
     if (all_children.size() >= max_children) {
       max_children = all_children.size();
@@ -120,7 +121,7 @@ void GuessTop(
   }
   
   if (max_parent == nullptr) {
-    std::cerr << "Error! No top found." << std::endl;
+    LOG(ERROR) << "Error! No top found." << std::endl;
   } else {
     std::cout << "Guessed top: " << max_parent->name() << " (" << max_children
               << " children)" << std::endl;
@@ -130,11 +131,16 @@ void GuessTop(
 }
 
 int main(int argc, char **argv) {
+  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  google::InitGoogleLogging(argv[0]);
+
   if (argc < 2) {
     std::cout << argv[0] << " Version " <<  jsondotrulo_VERSION_MAJOR << "."
               << jsondotrulo_VERSION_MINOR << std::endl;
   }
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
+
+  // TODO(aryap): Reading the JSON file should be the responsibility of an
+  // independent class.
 
   // Read json file.
   std::ifstream i(argv[1]);

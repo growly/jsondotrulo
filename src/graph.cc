@@ -10,6 +10,7 @@
 #include <utility>
 
 #include <gflags/gflags.h>
+#include <glog/logging.h>
 
 #include "edge.h"
 #include "graph.h"
@@ -242,9 +243,9 @@ void Graph::ExpandInstances(
 
       auto master_outputs_it = master->outputs_.find(port_name);
       if (master_outputs_it == master->outputs_.end()) {
-        std::cerr << "Error! Port " << port_name << " of instance vertex "
-                  << instance->name() << " was not found in master Graph for "
-                  << instance->instance_of() << std::endl;
+        LOG(ERROR) << "Error! Port " << port_name << " of instance vertex "
+                   << instance->name() << " was not found in master Graph for "
+                   << instance->instance_of() << std::endl;
         continue;
       }
       std::vector<Edge*> &master_outputs = master_outputs_it->second;
@@ -381,12 +382,18 @@ void Graph::WeightCombinatorialPaths() {
   std::cout << "Finding paths between synchronous elements" << std::endl;
 
   long long i = 0;
+  bool sample = false;
+
   while (!to_visit.empty()) {
-    if (++i % 1000 == 0)
-        std::cout << i << ", "
-                  << descendant_by_vertex.size() << ", "
-                  << descendant_by_edge.size() << ", "
-                  << critical_paths.size() << std::endl;
+    if (++i % 1000 == 0) {
+     VLOG(1) << i << ", "
+             << descendant_by_vertex.size() << ", "
+             << descendant_by_edge.size() << ", "
+             << critical_paths.size() << std::endl;
+      sample = true;
+    } else {
+      sample = false;
+    }
 
     Edge *current = to_visit.back().first;
 
@@ -395,17 +402,18 @@ void Graph::WeightCombinatorialPaths() {
     std::shared_ptr<Path> path(to_visit.back().second);
     to_visit.pop_back();
 
-    if (path->front().first->name() == FLAGS_trace_paths_for) {
-      path->Print();
-    }
+    sample = sample || (path->front().first->name() == FLAGS_trace_paths_for);
+    LOG_IF(INFO, sample) << path->AsString();
 
     auto descendant_it = descendant_by_edge.find(current);
     if (descendant_it != descendant_by_edge.end()) {
       // We already have the longest descendant for this edge, so we can
       // assemble the longest path through it, or we can ignore it.
       Path *longest_descendant = descendant_it->second;
-      if (longest_descendant == nullptr)
+      if (longest_descendant == nullptr) {
+
         continue;
+      }
 
       Path *final_path = new Path(path);
       final_path->Append(*longest_descendant);
@@ -500,9 +508,9 @@ void Graph::WeightCombinatorialPaths() {
 
       // Ignore combinational loops.
       if (path->ContainsVertex(next_vertex)) {
-        std::cout << "Path contains combinational loop: vertex "
-                  << next_vertex->name() << " is already in "
-                  << path->AsString() << std::endl;
+        LOG(WARNING) << "Path contains combinational loop: vertex "
+                     << next_vertex->name() << " is already in "
+                     << path->AsString() << std::endl;
         continue;
       }
 
@@ -584,25 +592,24 @@ void Graph::WeightCombinatorialPaths() {
   if (FLAGS_show_edge_longest_paths) {
     for (Edge *edge : edges_) {
       auto it = critical_path_by_edge.find(edge);
+      std::cout << "(" << edge->name << " wt: " << edge->weight << ") [";
       if (it == critical_path_by_edge.end()) {
-        std::cout << "(" << edge->name << " wt: " << edge->weight << ") [";
         std::cout << "none]" << std::endl;
         continue;
       }
       Path *path = it->second;
+      std::cout << path->AsString() << std::endl;
     }
-
-    for (Path *path : critical_paths)
-      delete path;
   }
+  // TODO(aryap): ??
+  for (Path *path : critical_paths)
+    delete path;
 
-  for (const auto &pair : descendant_by_edge) {
+  for (const auto &pair : descendant_by_edge)
     delete pair.second;
-  }
 
-  for (const auto &pair : descendant_by_vertex) {
+  for (const auto &pair : descendant_by_vertex)
     delete pair.second;
-  }
 }
 
 void Graph::AddInputEdges(
@@ -940,8 +947,8 @@ std::string Graph::AsEdgeListWithWeights() const {
       for (const Vertex *out : edge->out) {
         std::string line = in->name() + " " + out->name() + " " +
                            std::to_string(edge->weight) + "\n";
-        //std::cout << "edge: " << edge->name << " " << in->original_cell_name()
-        //          << " " << out->original_cell_name() << " w: " << line;
+        std::cout << "edge: " << edge->name << " " << in->original_cell_name()
+                  << " " << out->original_cell_name() << " w: " << line;
         repr += line;
       }
   }
