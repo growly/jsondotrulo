@@ -75,7 +75,7 @@ class Graph {
   Edge *FindOrCreateEdge(const std::string &name);
 
   void UpdateEdgeWeightsForPath(
-      Path *path,
+      Path *start_path,
       std::set<Path*> *critical_paths,
       std::unordered_map<Edge*, Path*> *critical_path_by_edge,
       bool *true_on_update);

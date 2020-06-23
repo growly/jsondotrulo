@@ -323,30 +323,41 @@ void Graph::ExpandInstances(
 }
 
 void Graph::UpdateEdgeWeightsForPath(
-    Path *path,
+    Path *start_path,
     std::set<Path*> *critical_paths,
     std::unordered_map<Edge*, Path*> *critical_path_by_edge,
     bool *path_was_used) {
-  double path_cost = path->Cost();
-  for (auto &pair : *path) {
-    Edge *edge = pair.second;
-    if (edge == nullptr) continue;
-    if (path_cost >= edge->weight) {
-      edge->weight = path_cost;
-      auto iter = critical_path_by_edge->find(edge);
-      if (iter != critical_path_by_edge->end()) {
-        Path *old_critical = iter->second;
-        old_critical->DecrementNumEdgesForWhichCritical();
-        if (old_critical->num_edges_for_which_critical() == 0) {
-          critical_paths->erase(old_critical);
-          delete old_critical;
+  // This recursively includes the cost of any parents.
+  double path_cost = start_path->Cost();
+  if (start_path->empty()) return;
+
+  Path *path = start_path;
+  while (path != nullptr) {
+    for (auto &pair : *path) {
+      Edge *edge = pair.second;
+      if (edge == nullptr) continue;
+      if (path_cost >= edge->weight) {
+        edge->weight = path_cost;
+        auto iter = critical_path_by_edge->find(edge);
+        if (iter != critical_path_by_edge->end()) {
+          Path *old_critical = iter->second;
+          // TODO(aryap): shared_ptr.
+          old_critical->DecrementNumEdgesForWhichCritical();
+          if (old_critical->num_edges_for_which_critical() == 0) {
+            critical_paths->erase(old_critical);
+            delete old_critical;
+          }
         }
+        (*critical_path_by_edge)[edge] = start_path;
+        start_path->IncrementNumEdgesForWhichCritical();
+        critical_paths->insert(start_path);
+        if (path_was_used != nullptr) *path_was_used = true;
       }
-      (*critical_path_by_edge)[edge] = path;
-      path->IncrementNumEdgesForWhichCritical();
-      critical_paths->insert(path);
-      if (path_was_used != nullptr) *path_was_used = true;
     }
+    // TODO(aryap): Not sure how to use shared_ptr "well" here, but since we
+    // only keep the pointer alive for the duration of the iteration it doesn't
+    // matter. It just smells bad.
+    path = path->source().get();
   }
 }
 
@@ -381,12 +392,18 @@ void Graph::WeightCombinatorialPaths() {
   std::cout << "Finding paths between synchronous elements" << std::endl;
 
   long long i = 0;
+  bool sample = false;
+
   while (!to_visit.empty()) {
-    if (++i % 1000 == 0)
-        std::cout << i << ", "
-                  << descendant_by_vertex.size() << ", "
-                  << descendant_by_edge.size() << ", "
-                  << critical_paths.size() << std::endl;
+    if (++i % 1000 == 0) {
+      //std::cout << i << ", "
+      //          << descendant_by_vertex.size() << ", "
+      //          << descendant_by_edge.size() << ", "
+      //          << critical_paths.size() << std::endl;
+      sample = true;
+    } else {
+      sample = false;
+    }
 
     Edge *current = to_visit.back().first;
 
@@ -395,6 +412,7 @@ void Graph::WeightCombinatorialPaths() {
     std::shared_ptr<Path> path(to_visit.back().second);
     to_visit.pop_back();
 
+    sample = sample || (path->front().first->name() == FLAGS_trace_paths_for);
     if (path->front().first->name() == FLAGS_trace_paths_for) {
       path->Print();
     }
@@ -404,8 +422,10 @@ void Graph::WeightCombinatorialPaths() {
       // We already have the longest descendant for this edge, so we can
       // assemble the longest path through it, or we can ignore it.
       Path *longest_descendant = descendant_it->second;
-      if (longest_descendant == nullptr)
+      if (longest_descendant == nullptr) {
+
         continue;
+      }
 
       Path *final_path = new Path(path);
       final_path->Append(*longest_descendant);
@@ -463,9 +483,12 @@ void Graph::WeightCombinatorialPaths() {
                                  &critical_path_by_edge,
                                  &defer_delete);
 
+        // DEBUG
+        std::cout << "skipping because terminal: " << final_path->AsString() << std::endl;
+
         // Unless we're doing some intense admin work, we delete the path
         // now that we're done with it.
-        if (!FLAGS_show_edge_longest_paths || !defer_delete) {
+        if (!FLAGS_show_edge_longest_paths && !defer_delete) {
           delete final_path;
         }
         continue;
@@ -492,6 +515,7 @@ void Graph::WeightCombinatorialPaths() {
                                  &critical_paths,
                                  &critical_path_by_edge,
                                  &defer_delete);
+        std::cout << "skipping because cached descendant: " << final_path->AsString() << std::endl;
         if (!defer_delete) {
           delete final_path;
         }
@@ -584,25 +608,24 @@ void Graph::WeightCombinatorialPaths() {
   if (FLAGS_show_edge_longest_paths) {
     for (Edge *edge : edges_) {
       auto it = critical_path_by_edge.find(edge);
+      std::cout << "(" << edge->name << " wt: " << edge->weight << ")";
       if (it == critical_path_by_edge.end()) {
-        std::cout << "(" << edge->name << " wt: " << edge->weight << ") [";
         std::cout << "none]" << std::endl;
         continue;
       }
       Path *path = it->second;
+      std::cout << path->AsString() << std::endl;
     }
-
-    for (Path *path : critical_paths)
-      delete path;
   }
+  // TODO(aryap): ??
+  for (Path *path : critical_paths)
+    delete path;
 
-  for (const auto &pair : descendant_by_edge) {
+  for (const auto &pair : descendant_by_edge)
     delete pair.second;
-  }
 
-  for (const auto &pair : descendant_by_vertex) {
+  for (const auto &pair : descendant_by_vertex)
     delete pair.second;
-  }
 }
 
 void Graph::AddInputEdges(
@@ -940,8 +963,8 @@ std::string Graph::AsEdgeListWithWeights() const {
       for (const Vertex *out : edge->out) {
         std::string line = in->name() + " " + out->name() + " " +
                            std::to_string(edge->weight) + "\n";
-        //std::cout << "edge: " << edge->name << " " << in->original_cell_name()
-        //          << " " << out->original_cell_name() << " w: " << line;
+        std::cout << "edge: " << edge->name << " " << in->original_cell_name()
+                  << " " << out->original_cell_name() << " w: " << line;
         repr += line;
       }
   }

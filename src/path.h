@@ -15,13 +15,14 @@ struct Edge;
 class Path {
  public:
   Path() {}
+
   Path(const std::pair<Vertex*, Edge*> start)
     : source_(nullptr),
       num_edges_for_which_critical_(0) {
     Append(start);
   }
 
-  Path(std::shared_ptr<const Path> source)
+  Path(std::shared_ptr<Path> source)
     : source_(source),
       num_edges_for_which_critical_(0) {}
 
@@ -46,6 +47,14 @@ class Path {
 
   void Print() const;
 
+  size_t size() const {
+    return hops_.size();
+  }
+
+  bool empty() const {
+    return hops_.empty();
+  }
+
   std::pair<Vertex*, Edge*> &front() { return hops_.front(); }
   const std::pair<Vertex*, Edge*> &front() const { return hops_.front(); }
 
@@ -62,6 +71,8 @@ class Path {
   std::vector<std::pair<Vertex*, Edge*>>::const_iterator end() const {
     return hops_.end();
   }
+
+  std::shared_ptr<Path> &source() { return source_; }
 
   // Places a copy of the second-to-last hop in *hop and return true, unless
   // the Path isn't long enough to have a second-to-last hop, in which case
@@ -92,7 +103,7 @@ class Path {
   // Sourth Path, if any. This path is treated as part of this path, so is
   // recursively searched for elements and counts towards this Path's length, if
   // any.
-  std::shared_ptr<const Path> source_;
+  std::shared_ptr<Path> source_;
 
   size_t num_edges_for_which_critical_;
 };
