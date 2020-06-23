@@ -20,7 +20,7 @@ target_include_directories(jsondotrulo PUBLIC
 find_library(tcmalloc_lib NAMES tcmalloc REQUIRED)
 message(STATUS "tcmalloc library is in " ${tcmalloc_lib})
 
-target_link_libraries(jsondotrulo PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(jsondotrulo PUBLIC nlohmann_json::nlohmann_json)
 target_link_libraries(jsondotrulo PUBLIC ${tcmalloc_lib}
                                          gflags::gflags
                                          glog::glog)
