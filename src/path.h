@@ -79,6 +79,7 @@ class Path {
   // *hop is not modified and this returns false.
   bool PenultimateHop(std::pair<Vertex*, Edge*> *hop);
 
+  bool ContainsName(const std::string &name) const;
   bool ContainsVertex(Vertex *vertex) const;
   bool ContainsEdge(Edge *edge) const;
 

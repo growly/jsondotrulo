@@ -41,6 +41,15 @@ bool Path::ContainsVertex(Vertex *vertex) const {
   return false;
 }
 
+bool Path::ContainsName(const std::string &name) const {
+  if (name.empty()) return false;
+  if (source_ && source_->ContainsName(name)) return true;
+  for (const auto &hop : hops_)
+    if (hop.first->name() == name || hop.second->name == name)
+      return true;
+  return false;
+}
+
 bool Path::ContainsEdge(Edge *edge) const {
   assert(edge != nullptr);
   if (source_ && source_->ContainsEdge(edge)) return true;

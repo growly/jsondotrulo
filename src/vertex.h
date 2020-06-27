@@ -58,6 +58,8 @@ class Vertex {
     switch (type_) {
       case VertexType::FLIP_FLOP:
       case VertexType::LATCH:
+      case VertexType::IN_PIN:
+      case VertexType::OUT_PIN:
         return true;
       default:
         return false;

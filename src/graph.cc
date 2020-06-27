@@ -20,8 +20,8 @@ namespace jsondotrulo {
 
 DEFINE_bool(show_edge_longest_paths, false,
             "Print the longest path traversing each edge when weighting them.");
-DEFINE_string(trace_paths_for, "",
-              "Name of vertex whose paths to print.");
+DEFINE_string(trace, "",
+              "Name of vertex or edge whose paths to trace.");
 
 Graph::~Graph() {
   for (const Vertex *vertex : vertices_)
@@ -395,15 +395,15 @@ void Graph::WeightCombinatorialPaths() {
   bool sample = false;
 
   while (!to_visit.empty()) {
-    if (++i % 1000 == 0) {
-      //std::cout << i << ", "
-      //          << descendant_by_vertex.size() << ", "
-      //          << descendant_by_edge.size() << ", "
-      //          << critical_paths.size() << std::endl;
-      sample = true;
-    } else {
-      sample = false;
-    }
+    //if (++i % 1000 == 0) {
+    //  std::cout << i << ", "
+    //            << descendant_by_vertex.size() << ", "
+    //            << descendant_by_edge.size() << ", "
+    //            << critical_paths.size() << std::endl;
+    //  sample = true;
+    //} else {
+    //  sample = false;
+    //}
 
     Edge *current = to_visit.back().first;
 
@@ -412,10 +412,8 @@ void Graph::WeightCombinatorialPaths() {
     std::shared_ptr<Path> path(to_visit.back().second);
     to_visit.pop_back();
 
-    sample = sample || (path->front().first->name() == FLAGS_trace_paths_for);
-    if (path->front().first->name() == FLAGS_trace_paths_for) {
-      path->Print();
-    }
+    sample = sample || path->ContainsName(FLAGS_trace);
+    if (sample) path->Print();
 
     auto descendant_it = descendant_by_edge.find(current);
     if (descendant_it != descendant_by_edge.end()) {
@@ -484,7 +482,8 @@ void Graph::WeightCombinatorialPaths() {
                                  &defer_delete);
 
         // DEBUG
-        std::cout << "skipping because terminal: " << final_path->AsString() << std::endl;
+        if (sample) std::cout << "skipping because terminal: "
+                              << final_path->AsString() << std::endl;
 
         // Unless we're doing some intense admin work, we delete the path
         // now that we're done with it.
@@ -515,7 +514,8 @@ void Graph::WeightCombinatorialPaths() {
                                  &critical_paths,
                                  &critical_path_by_edge,
                                  &defer_delete);
-        std::cout << "skipping because cached descendant: " << final_path->AsString() << std::endl;
+        if (sample) std::cout << "skipping because cached descendant: "
+                              << final_path->AsString() << std::endl;
         if (!defer_delete) {
           delete final_path;
         }
@@ -963,8 +963,8 @@ std::string Graph::AsEdgeListWithWeights() const {
       for (const Vertex *out : edge->out) {
         std::string line = in->name() + " " + out->name() + " " +
                            std::to_string(edge->weight) + "\n";
-        std::cout << "edge: " << edge->name << " " << in->original_cell_name()
-                  << " " << out->original_cell_name() << " w: " << line;
+        //std::cout << "edge: " << edge->name << " " << in->original_cell_name()
+        //          << " " << out->original_cell_name() << " w: " << line;
         repr += line;
       }
   }
