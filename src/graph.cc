@@ -361,16 +361,6 @@ void Graph::UpdateEdgeWeightsForPath(
   }
 }
 
-//void Graph::CountPaths() {
-//  Vertex *source;
-//  std::set<Vertex*> connected;
-//  std::vector<Vertex*> to_visit;
-//  long long degreej
-//  for (Vertex *vertex : vertices_) {
-//    
-//  }
-//}
-
 // Traverse the tree. At every node, record the longest path from that point.
 // This avoids repeating searches.
 void Graph::WeightCombinatorialPaths() {
@@ -387,29 +377,12 @@ void Graph::WeightCombinatorialPaths() {
 
   size_t max_capacity_among_paths = 0;
 
-  //// Seed start paths.
-  //for (Vertex *start_vertex : vertices_) {
-  //  if (!start_vertex->IsSynchronous()) continue;
-
-  //  for (Edge *start_edge : start_vertex->out()) {
-  //    Path *start_path = new Path{{start_vertex, start_edge}};
-  //    //paths.insert(start_path);
-
-  //    to_visit.push_back(std::make_pair(start_edge, start_path));
-  //  }
-  //}
-
-  //std::cout << "Finding paths among (" << vertices_.size()
-  //          << ") synchronous elements" << std::endl;
-
   long long i = 0;
   bool sample = false;
 
-  long j = 0;
+  // Seed start paths.
   for (Vertex *start_vertex : vertices_) {
     if (!start_vertex->IsSynchronous()) continue;
-
-    std::cout << "searching paths starting at " << start_vertex->name() << std::endl;
 
     for (Edge *start_edge : start_vertex->out()) {
       Path *start_path = new Path{{start_vertex, start_edge}};
@@ -418,22 +391,7 @@ void Graph::WeightCombinatorialPaths() {
       to_visit.push_back(std::make_pair(start_edge, start_path));
     }
 
-    j++;
-
-    std::unordered_map<Edge*, size_t> visited_edges;
-    std::unordered_map<Vertex*, size_t> visited_vertices;
-
     while (!to_visit.empty()) {
-      if (++i % 1000 == 0) {
-        std::cout << i << ", "
-                  << descendant_by_vertex.size() << ", "
-                  << descendant_by_edge.size() << ", "
-                  << critical_paths.size() << std::endl;
-        sample = true;
-      } else {
-        sample = false;
-      }
-
       Edge *current = to_visit.back().first;
 
       // This is the search path. Before it is used in a completed form as a
@@ -472,14 +430,6 @@ void Graph::WeightCombinatorialPaths() {
 
         // We're done with this edge now; move on.
         continue;
-      } else if (sample) {
-        auto e_iter = visited_edges.find(current);
-        if (e_iter != visited_edges.end()) {
-          std::cout << "seen " << current->name << " " << e_iter->second
-                    << " times and its descendants are not recorded" << std::endl;
-          path->Print();
-        }
-        visited_edges[current]++;
       }
 
       // False if this edge leads to new search paths. If true, the edge leads to
@@ -577,17 +527,6 @@ void Graph::WeightCombinatorialPaths() {
           vertex_max_cost = next_vertex->Cost();
         }
 
-        // DEBUG
-        //if (sample) {
-        //  auto v_iter = visited_vertices.find(next_vertex);
-        //  if (v_iter != visited_vertices.end()) {
-        //    std::cout << "seen " << next_vertex->name() << " " << v_iter->second
-        //              << " times and its descendants are not known" << std::endl;
-        //  }
-        //  visited_vertices[next_vertex]++;
-        //}
-
-
         // If the path-so-far isn't ending, extend a copy of the path with
         // the next edge to follow.
         //
@@ -634,7 +573,6 @@ void Graph::WeightCombinatorialPaths() {
         }
 
         if (next_vertex_is_terminal && max_cost_edge_path != nullptr) {
-          std::cout << next_vertex->name() << " is now terminal" << std::endl;
           assert(max_cost_edge != nullptr);
           Path *terminal_path = new Path({next_vertex, max_cost_edge});
           terminal_path->Append(*max_cost_edge_path);
@@ -643,10 +581,6 @@ void Graph::WeightCombinatorialPaths() {
 
         if (!next_vertex_is_terminal) {
           current_edge_is_terminal = false;
-          if (sample) {
-            std::cout << "edge " << current->name << " is not terminal because "
-                      << next_vertex->name() << " is not" << std::endl;
-          }
         }
       }
 
@@ -667,36 +601,41 @@ void Graph::WeightCombinatorialPaths() {
         // A nullptr entry means that the edge leads nowhere. Otherwise, the
         // longest descendant path is recorded.
         descendant_by_edge[current] = terminal_path;
-        std::cout << "edge " << current->name << " is NOW terminal" << std::endl;
-      } else if (sample) {
-        std::cout << "edge " << current->name << " is not terminal" << std::endl;
       }
 
       // The path shared_ptr should now leave scope and continue on its journey
       // to destruction.
     }
-
-    std::cout << "Searched " << start_vertex->out().size()
-              << " edge(s) leaving " << start_vertex->name() << "; "
-              << (vertices_.size() - j) << " more vertices left"
-              << std::endl;
   }
 
   std::cout << "Found " << num_found << " paths" << std::endl;
 
   if (FLAGS_show_edge_longest_paths) {
+    std::cout << "Critical paths by edge: " << std::endl;
     for (Edge *edge : edges_) {
       auto it = critical_path_by_edge.find(edge);
-      std::cout << "(" << edge->name << " wt: " << edge->weight << ")";
+      std::cout << "(" << edge->name << " wt: " << edge->weight << ") ";
       if (it == critical_path_by_edge.end()) {
-        std::cout << "none]" << std::endl;
+        std::cout << "none" << std::endl;
         continue;
       }
       Path *path = it->second;
       std::cout << path->AsString() << std::endl;
     }
+    std::cout << std::endl << "Descendant paths by edge: " << std::endl;
+    for (const auto &pair : descendant_by_edge) {
+      if (pair.second == nullptr) continue;
+      std::cout << "(" << pair.first->name << " c: " << pair.second->Cost() << ") "
+                << pair.second->AsString() << std::endl;
+    }
+    std::cout << std::endl << "Descendant paths by vertex: " << std::endl;
+    for (const auto &pair : descendant_by_vertex) {
+      if (pair.second == nullptr) continue;
+      std::cout << "(" << pair.first->name() << " c: " << pair.second->Cost() << ") "
+                << pair.second->AsString() << std::endl;
+    }
   }
-  // TODO(aryap): ??
+
   for (Path *path : critical_paths)
     delete path;
 
