@@ -361,6 +361,16 @@ void Graph::UpdateEdgeWeightsForPath(
   }
 }
 
+//void Graph::CountPaths() {
+//  Vertex *source;
+//  std::set<Vertex*> connected;
+//  std::vector<Vertex*> to_visit;
+//  long long degreej
+//  for (Vertex *vertex : vertices_) {
+//    
+//  }
+//}
+
 // Traverse the tree. At every node, record the longest path from that point.
 // This avoids repeating searches.
 void Graph::WeightCombinatorialPaths() {
@@ -377,9 +387,29 @@ void Graph::WeightCombinatorialPaths() {
 
   size_t max_capacity_among_paths = 0;
 
-  // Seed start paths.
+  //// Seed start paths.
+  //for (Vertex *start_vertex : vertices_) {
+  //  if (!start_vertex->IsSynchronous()) continue;
+
+  //  for (Edge *start_edge : start_vertex->out()) {
+  //    Path *start_path = new Path{{start_vertex, start_edge}};
+  //    //paths.insert(start_path);
+
+  //    to_visit.push_back(std::make_pair(start_edge, start_path));
+  //  }
+  //}
+
+  //std::cout << "Finding paths among (" << vertices_.size()
+  //          << ") synchronous elements" << std::endl;
+
+  long long i = 0;
+  bool sample = false;
+
+  long j = 0;
   for (Vertex *start_vertex : vertices_) {
     if (!start_vertex->IsSynchronous()) continue;
+
+    std::cout << "searching paths starting at " << start_vertex->name() << std::endl;
 
     for (Edge *start_edge : start_vertex->out()) {
       Path *start_path = new Path{{start_vertex, start_edge}};
@@ -387,220 +417,269 @@ void Graph::WeightCombinatorialPaths() {
 
       to_visit.push_back(std::make_pair(start_edge, start_path));
     }
-  }
 
-  std::cout << "Finding paths between synchronous elements" << std::endl;
+    j++;
 
-  long long i = 0;
-  bool sample = false;
+    std::unordered_map<Edge*, size_t> visited_edges;
+    std::unordered_map<Vertex*, size_t> visited_vertices;
 
-  while (!to_visit.empty()) {
-    //if (++i % 1000 == 0) {
-    //  std::cout << i << ", "
-    //            << descendant_by_vertex.size() << ", "
-    //            << descendant_by_edge.size() << ", "
-    //            << critical_paths.size() << std::endl;
-    //  sample = true;
-    //} else {
-    //  sample = false;
-    //}
+    while (!to_visit.empty()) {
+      if (++i % 1000 == 0) {
+        std::cout << i << ", "
+                  << descendant_by_vertex.size() << ", "
+                  << descendant_by_edge.size() << ", "
+                  << critical_paths.size() << std::endl;
+        sample = true;
+      } else {
+        sample = false;
+      }
 
-    Edge *current = to_visit.back().first;
+      Edge *current = to_visit.back().first;
 
-    // This is the search path. Before it is used in a completed form as a
-    // 'critical path', it is copied and a final hop is added.
-    std::shared_ptr<Path> path(to_visit.back().second);
-    to_visit.pop_back();
+      // This is the search path. Before it is used in a completed form as a
+      // 'critical path', it is copied and a final hop is added.
+      std::shared_ptr<Path> path(to_visit.back().second);
+      to_visit.pop_back();
 
-    sample = sample || path->ContainsName(FLAGS_trace);
-    if (sample) path->Print();
+      sample = sample || path->ContainsName(FLAGS_trace);
+      if (sample) path->Print();
 
-    auto descendant_it = descendant_by_edge.find(current);
-    if (descendant_it != descendant_by_edge.end()) {
-      // We already have the longest descendant for this edge, so we can
-      // assemble the longest path through it, or we can ignore it.
-      Path *longest_descendant = descendant_it->second;
-      if (longest_descendant == nullptr) {
+      auto descendant_it = descendant_by_edge.find(current);
+      if (descendant_it != descendant_by_edge.end()) {
+        // We already have the longest descendant for this edge, so we can
+        // assemble the longest path through it, or we can ignore it.
+        Path *longest_descendant = descendant_it->second;
+        if (longest_descendant == nullptr) {
 
+          continue;
+        }
+
+        Path *final_path = new Path(path);
+        final_path->Append(*longest_descendant);
+
+        // Update edge weights.
+        bool defer_delete = false;
+        UpdateEdgeWeightsForPath(final_path,
+                                 &critical_paths,
+                                 &critical_path_by_edge,
+                                 &defer_delete);
+        if (sample) std::cout << "skipping because cached descendant ("
+                              << current->name << "): "
+                              << final_path->AsString() << std::endl;
+        if (!defer_delete) {
+          delete final_path;
+        }
+
+        // We're done with this edge now; move on.
         continue;
+      } else if (sample) {
+        auto e_iter = visited_edges.find(current);
+        if (e_iter != visited_edges.end()) {
+          std::cout << "seen " << current->name << " " << e_iter->second
+                    << " times and its descendants are not recorded" << std::endl;
+          path->Print();
+        }
+        visited_edges[current]++;
       }
 
-      Path *final_path = new Path(path);
-      final_path->Append(*longest_descendant);
+      // False if this edge leads to new search paths. If true, the edge leads to
+      // only synchronous elements or non-synchronous elements whose
+      // descendant-paths have been visited. This is used to keep track of
+      // visited subgraphs.
+      bool current_edge_is_terminal = true;
 
-      // Update edge weights.
-      bool defer_delete = false;
-      UpdateEdgeWeightsForPath(final_path,
-                               &critical_paths,
-                               &critical_path_by_edge,
-                               &defer_delete);
-      if (!defer_delete) {
-        delete final_path;
-      }
+      double vertex_max_cost = -1.0;
+      Vertex *max_cost_vertex = nullptr;
+      // If this is non-null, it indicates that the current edge is terminal
+      // because the max_cost_vertex has known descendants. Then it points to the
+      // longest path of which max_cost_vertex is the root.
+      Path *max_cost_vertex_path = nullptr;
 
-      // We're done with this edge now; move on.
-      continue;
-    }
+      for (Vertex *next_vertex : current->out) {
+        // Paths end at flip-flops and latches and such.
+        if (next_vertex->IsSynchronous()) {
+          if (next_vertex->Cost() > vertex_max_cost) {
+            max_cost_vertex_path = nullptr;
+            max_cost_vertex = next_vertex;
+            vertex_max_cost = next_vertex->Cost();
+          }
 
-    // False if this edge leads to new search paths. If true, the edge leads to
-    // only synchronous elements or non-synchronous elements whose
-    // descendant-paths have been visited. This is used to keep track of
-    // visited subgraphs.
-    bool current_edge_is_terminal = true;
+          bool defer_delete = false;
+          Path *final_path = new Path(path);
 
-    double vertex_max_cost = -1.0;
-    Vertex *max_cost_vertex = nullptr;
-    // If this is non-null, it indicates that the current edge is terminal
-    // because the max_cost_vertex has known descendants. Then it points to the
-    // longest path of which max_cost_vertex is the root.
-    Path *max_cost_vertex_path = nullptr;
+          // Critical paths can be loops if they start and end at the same place
+          // (as oppposed to contained a loop of combinational elements in the
+          // middle), so we don't check if next_vertex is already contained here.
+          final_path->Append(std::make_pair(next_vertex, nullptr));
 
-    for (Vertex *next_vertex : current->out) {
-      // Paths end at flip-flops and latches and such.
-      if (next_vertex->IsSynchronous()) {
+          // It takes too much memory to save these, so we process them now and
+          // move on. Unless we have to.
+          ++num_found;
+
+          UpdateEdgeWeightsForPath(final_path,
+                                   &critical_paths,
+                                   &critical_path_by_edge,
+                                   &defer_delete);
+
+          // DEBUG
+          if (sample) std::cout << "skipping because terminal: "
+                                << final_path->AsString() << std::endl;
+
+          // Unless we're doing some intense admin work, we delete the path
+          // now that we're done with it.
+          if (!FLAGS_show_edge_longest_paths && !defer_delete) {
+            delete final_path;
+          }
+          continue;
+        }
+
+        // If the cost of the subgraph below this vertex is already known, use
+        // it.
+        auto descendant_by_vertex_it = descendant_by_vertex.find(next_vertex);
+        if (descendant_by_vertex_it != descendant_by_vertex.end()) {
+          Path *terminal_path = descendant_by_vertex_it->second;
+
+          if (terminal_path->Cost() > vertex_max_cost) {
+            max_cost_vertex_path = terminal_path;
+            max_cost_vertex = next_vertex;
+            vertex_max_cost = terminal_path->Cost();
+          }
+
+          Path *final_path = new Path(path);
+          final_path->Append(*terminal_path);
+
+          bool defer_delete = false;
+          ++num_found;
+          UpdateEdgeWeightsForPath(final_path,
+                                   &critical_paths,
+                                   &critical_path_by_edge,
+                                   &defer_delete);
+          if (sample) std::cout << "skipping because cached descendant ("
+                                << next_vertex->name() << "): "
+                                << final_path->AsString() << std::endl;
+          if (!defer_delete) {
+            delete final_path;
+          }
+          continue;
+        }
+
+        // Ignore combinational loops.
+        if (path->ContainsVertex(next_vertex)) {
+          std::cout << "Path contains combinational loop: vertex "
+                    << next_vertex->name() << " is already in "
+                    << path->AsString() << std::endl;
+          continue;
+        }
+
         if (next_vertex->Cost() > vertex_max_cost) {
           max_cost_vertex_path = nullptr;
           max_cost_vertex = next_vertex;
           vertex_max_cost = next_vertex->Cost();
         }
 
-        bool defer_delete = false;
-        Path *final_path = new Path(path);
-
-        // Critical paths can be loops if they start and end at the same place
-        // (as oppposed to contained a loop of combinational elements in the
-        // middle), so we don't check if next_vertex is already contained here.
-        final_path->Append(std::make_pair(next_vertex, nullptr));
-
-        // It takes too much memory to save these, so we process them now and
-        // move on. Unless we have to.
-        ++num_found;
-
-        UpdateEdgeWeightsForPath(final_path,
-                                 &critical_paths,
-                                 &critical_path_by_edge,
-                                 &defer_delete);
-
         // DEBUG
-        if (sample) std::cout << "skipping because terminal: "
-                              << final_path->AsString() << std::endl;
+        //if (sample) {
+        //  auto v_iter = visited_vertices.find(next_vertex);
+        //  if (v_iter != visited_vertices.end()) {
+        //    std::cout << "seen " << next_vertex->name() << " " << v_iter->second
+        //              << " times and its descendants are not known" << std::endl;
+        //  }
+        //  visited_vertices[next_vertex]++;
+        //}
 
-        // Unless we're doing some intense admin work, we delete the path
-        // now that we're done with it.
-        if (!FLAGS_show_edge_longest_paths && !defer_delete) {
-          delete final_path;
+
+        // If the path-so-far isn't ending, extend a copy of the path with
+        // the next edge to follow.
+        //
+        // Also check if this vertex is terminal, which happens when all of its
+        // child edges are terminal.
+        bool next_vertex_is_terminal = true;
+        double edge_max_cost = -1.0;
+        Path *max_cost_edge_path = nullptr;
+        Edge *max_cost_edge = nullptr;
+        for (Edge *next_edge : next_vertex->out()) {
+          descendant_it = descendant_by_edge.find(next_edge);
+          if (descendant_it == descendant_by_edge.end()) {
+            if (sample)
+              std::cout << "vertex " << next_vertex->name()
+                        << " is not terminal because " << next_edge->name
+                        << " is not" << std::endl;
+            next_vertex_is_terminal = false;
+          } else if (descendant_it->second == nullptr) {
+            // This edge is known to go nowhere. Skip it. Vertices leading to
+            // this edge are still terminal but we can't account for it or use
+            // it to seed more search paths.
+            continue;
+          } else {
+            Path *descendant_path = descendant_it->second;
+            if (descendant_path->Cost() > edge_max_cost) {
+              max_cost_edge_path = descendant_path;
+              max_cost_edge = next_edge;
+              edge_max_cost = descendant_path->Cost();
+            }
+            // The next_edge is not skipped even if the descendant path is
+            // known because that will happen on the next iteration of the
+            // outer loop, when it is fetched from to_visit.
+          }
+
+          // Don't add a duplicate edge to the path.
+          if (path->ContainsEdge(next_edge))
+            continue;
+          // Create a new path for the each next-hop.
+          Path *new_path = new Path(path);
+
+          new_path->Append(std::make_pair(next_vertex, next_edge));
+          //paths.insert(new_path);
+          to_visit.push_back(std::make_pair(next_edge, new_path));
         }
-        continue;
-      }
 
-      // If the cost of the subgraph below this vertex is already known, use
-      // it.
-      auto descendant_by_vertex_it = descendant_by_vertex.find(next_vertex);
-      if (descendant_by_vertex_it != descendant_by_vertex.end()) {
-        Path *terminal_path = descendant_by_vertex_it->second;
-
-        if (terminal_path->Cost() > vertex_max_cost) {
-          max_cost_vertex_path = terminal_path;
-          max_cost_vertex = next_vertex;
-          vertex_max_cost = terminal_path->Cost();
+        if (next_vertex_is_terminal && max_cost_edge_path != nullptr) {
+          std::cout << next_vertex->name() << " is now terminal" << std::endl;
+          assert(max_cost_edge != nullptr);
+          Path *terminal_path = new Path({next_vertex, max_cost_edge});
+          terminal_path->Append(*max_cost_edge_path);
+          descendant_by_vertex[next_vertex] = terminal_path;
         }
 
-        Path *final_path = new Path(path);
-        final_path->Append(*terminal_path);
-
-        bool defer_delete = false;
-        ++num_found;
-        UpdateEdgeWeightsForPath(final_path,
-                                 &critical_paths,
-                                 &critical_path_by_edge,
-                                 &defer_delete);
-        if (sample) std::cout << "skipping because cached descendant: "
-                              << final_path->AsString() << std::endl;
-        if (!defer_delete) {
-          delete final_path;
-        }
-        continue;
-      }
-
-      // Ignore combinational loops.
-      if (path->ContainsVertex(next_vertex)) {
-        std::cout << "Path contains combinational loop: vertex "
-                  << next_vertex->name() << " is already in "
-                  << path->AsString() << std::endl;
-        continue;
-      }
-
-      current_edge_is_terminal = false;
-
-      if (next_vertex->Cost() > vertex_max_cost) {
-        max_cost_vertex_path = nullptr;
-        max_cost_vertex = next_vertex;
-        vertex_max_cost = next_vertex->Cost();
-      }
-
-      // If the path-so-far isn't ending, extend a copy of the path with
-      // the next edge to follow.
-      //
-      // Also check if this vertex is terminal, which happens when all of its
-      // child edges are terminal.
-      bool next_vertex_is_terminal = true;
-      double edge_max_cost = -1.0;
-      Path *max_cost_edge_path = nullptr;
-      Edge *max_cost_edge = nullptr;
-      for (Edge *next_edge : next_vertex->out()) {
-        descendant_it = descendant_by_edge.find(next_edge);
-        if (descendant_it == descendant_by_edge.end()) {
-          next_vertex_is_terminal = false;
-        } else if (descendant_it->second == nullptr) {
-          // This edge is known to go nowhere.
-          continue;
-        } else {
-          Path *descendant_path = descendant_it->second;
-          if (descendant_path->Cost() > edge_max_cost) {
-            max_cost_edge_path = descendant_path;
-            max_cost_edge = next_edge;
-            edge_max_cost = descendant_path->Cost();
+        if (!next_vertex_is_terminal) {
+          current_edge_is_terminal = false;
+          if (sample) {
+            std::cout << "edge " << current->name << " is not terminal because "
+                      << next_vertex->name() << " is not" << std::endl;
           }
         }
-
-        // Don't add a duplicate edge to the path.
-        if (path->ContainsEdge(next_edge))
-          continue;
-        // Create a new path for the each next-hop.
-        Path *new_path = new Path(path);
-
-        new_path->Append(std::make_pair(next_vertex, next_edge));
-        //paths.insert(new_path);
-        to_visit.push_back(std::make_pair(next_edge, new_path));
       }
 
-      if (next_vertex_is_terminal && max_cost_edge_path != nullptr) {
-        assert(max_cost_edge != nullptr);
-        Path *terminal_path = new Path({next_vertex, max_cost_edge});
-        terminal_path->Append(*max_cost_edge_path);
-        descendant_by_vertex[next_vertex] = terminal_path;
+      // round_43098.187, LUT_44225, round_43098.186
+
+      if (current_edge_is_terminal) {
+        // None of the vertices out of this edge led to new search paths, so it's
+        // 'terminal'. Record the longest descendant. At this point we need to
+        // find the highest-cost final node and use that as the terminal node.
+        Path *terminal_path = nullptr;
+        if (max_cost_vertex != nullptr) {
+          assert(!current->out.empty());
+          terminal_path = max_cost_vertex_path == nullptr ?
+              new Path(std::pair<Vertex*, Edge*>{max_cost_vertex, nullptr}) :
+              new Path(*max_cost_vertex_path);
+        }
+
+        // A nullptr entry means that the edge leads nowhere. Otherwise, the
+        // longest descendant path is recorded.
+        descendant_by_edge[current] = terminal_path;
+        std::cout << "edge " << current->name << " is NOW terminal" << std::endl;
+      } else if (sample) {
+        std::cout << "edge " << current->name << " is not terminal" << std::endl;
       }
+
+      // The path shared_ptr should now leave scope and continue on its journey
+      // to destruction.
     }
 
-    if (current_edge_is_terminal) {
-      // None of the vertices out of this edge led to new search paths, so it's
-      // 'terminal'. Record the longest descendant. At this point we need to
-      // find the highest-cost final node and use that as the terminal node.
-      Path *terminal_path = nullptr;
-      if (max_cost_vertex != nullptr) {
-        assert(!current->out.empty());
-        terminal_path = max_cost_vertex_path == nullptr ?
-            new Path(std::pair<Vertex*, Edge*>{max_cost_vertex, nullptr}) :
-            new Path(*max_cost_vertex_path);
-      }
-
-      // A nullptr entry means that the edge leads nowhere. Otherwise, the
-      // longest descendant path is recorded.
-      descendant_by_edge[current] = terminal_path;
-    }
-
-    // The path shared_ptr should now leave scope and continue on its journey
-    // to destruction.
+    std::cout << "Searched " << start_vertex->out().size()
+              << " edge(s) leaving " << start_vertex->name() << "; "
+              << (vertices_.size() - j) << " more vertices left"
+              << std::endl;
   }
 
   std::cout << "Found " << num_found << " paths" << std::endl;
