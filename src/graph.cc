@@ -559,7 +559,6 @@ void Graph::WeightCombinatorialPaths() {
             // The next_edge is not skipped even if the descendant path is
             // known because that will happen on the next iteration of the
             // outer loop, when it is fetched from to_visit.
-            continue;
           }
 
           // Don't add a duplicate edge to the path.
@@ -581,7 +580,7 @@ void Graph::WeightCombinatorialPaths() {
           if (terminal_path->Cost() > vertex_max_cost) {
             max_cost_vertex_path = terminal_path;
             max_cost_vertex = next_vertex;
-            vertex_max_cost = next_vertex->Cost();
+            vertex_max_cost = terminal_path->Cost();
           }
         }
 
