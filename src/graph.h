@@ -90,6 +90,8 @@ class Graph {
   std::vector<Edge*> edges_;
   // All of the Edges, indexed by their name.
   std::unordered_map<std::string, Edge*> edges_by_name_;
+  // All of the Vertices, indexed by their name.
+  std::unordered_map<std::string, Vertex*> vertices_by_name_;
   // Edges by partition: if all vertices in/out of an edge are in a single
   // partition, it is listed here. The '-1' partition means 'unpartitioned'.
   std::map<int, std::set<Edge*>> edges_by_partition_;

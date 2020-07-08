@@ -80,6 +80,7 @@ void Graph::AddVertex(
     instances_.push_back(vertex);
   }
   vertices_.push_back(vertex);
+  vertices_by_name_[vertex->name()] = vertex;
 }
 
 void Graph::ExpandInstances(
@@ -159,6 +160,7 @@ void Graph::ExpandInstances(
         new_vertex->in().push_back(new_edge);
       }
       vertices_.push_back(new_vertex);
+      vertices_by_name_[new_vertex->name()] = new_vertex;
     }
 
     // To avoid creating and maintaining this structure for every vertex, we
@@ -614,6 +616,40 @@ void Graph::WeightCombinatorialPaths() {
   }
 
   std::cout << "Found " << num_found << " paths" << std::endl;
+
+  auto trace_edge_it = edges_by_name_.find(FLAGS_trace);
+  Edge *trace_edge = nullptr;
+  if (trace_edge_it != edges_by_name_.end()) {
+    trace_edge = trace_edge_it->second;
+    auto trace_descendant_it = descendant_by_edge.find(trace_edge);
+    if (trace_descendant_it != descendant_by_edge.end()) {
+      Path *desc = trace_descendant_it->second;
+      std::cout << "longest descendant c=" << desc->Cost() << " for "
+                << trace_edge->name << " is " << desc->AsString()
+                << std::endl;
+    } else {
+      std::cout << "no descendant for " << FLAGS_trace << " found" << std::endl;
+    }
+  } else {
+    std::cout << "no edge for " << FLAGS_trace << " found" << std::endl;
+  }
+
+  auto trace_vertex_it = vertices_by_name_.find(FLAGS_trace);
+  Vertex *trace_vertex = nullptr;
+  if (trace_vertex_it != vertices_by_name_.end()) {
+    trace_vertex = trace_vertex_it->second;
+    auto trace_descendant_it = descendant_by_vertex.find(trace_vertex);
+    if (trace_descendant_it != descendant_by_vertex.end()) {
+      Path *desc = trace_descendant_it->second;
+      std::cout << "longest descendant c=" << desc->Cost() << " for "
+                << trace_vertex->name() << " is " << desc->AsString()
+                << std::endl;
+    } else {
+      std::cout << "no descendant for " << FLAGS_trace << " found" << std::endl;
+    }
+  } else {
+    std::cout << "no vertex for " << FLAGS_trace << " found" << std::endl;
+  }
 
   if (FLAGS_show_edge_longest_paths) {
     std::cout << "Critical paths by edge: " << std::endl;
