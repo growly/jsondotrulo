@@ -363,12 +363,28 @@ void Graph::UpdateEdgeWeightsForPath(
   }
 }
 
+namespace {
+
+struct PathCache {
+  // The cost to arrive at whatever node this cache entry represents, but _not_
+  // including the node itself.
+  double arrival_cost;
+
+  // Each path includes the node for which this cache entry exists.
+  std::set<Path*> paths;
+};
+
+} // namespace
+
+
 // Traverse the tree. At every node, record the longest path from that point.
 // This avoids repeating searches.
 void Graph::WeightCombinatorialPaths() {
   //std::set<Path*> paths;
-  std::unordered_map<Vertex*, Path*> descendant_by_vertex;
-  std::unordered_map<Edge*, Path*> descendant_by_edge;
+  // TODO(aryap): Need to address case where cached descendant is actually
+  // multiple equal-cost paths.
+  std::unordered_map<Vertex*, PathCache> descendant_by_vertex;
+  std::unordered_map<Edge*, PathCache> descendant_by_edge;
 
   std::set<Path*> critical_paths;
   std::unordered_map<Edge*, Path*> critical_path_by_edge;
@@ -401,37 +417,51 @@ void Graph::WeightCombinatorialPaths() {
       std::shared_ptr<Path> path(to_visit.back().second);
       to_visit.pop_back();
 
+      double cost_so_far = path->Cost();
+
       sample = sample || path->ContainsName(FLAGS_trace);
       if (sample) path->Print();
 
       auto descendant_it = descendant_by_edge.find(current);
       if (descendant_it != descendant_by_edge.end()) {
-        // We already have the longest descendant for this edge, so we can
-        // assemble the longest path through it, or we can ignore it.
-        Path *longest_descendant = descendant_it->second;
-        if (longest_descendant == nullptr) {
+        // We already have the longest descendant(s) for this edge, so we can
+        // assemble the longest path through them. If the cache entry exists
+        // but the descendants are empty, that means we know this is a dead
+        // end. If the cost of our path so far exceeds that used to cache this
+        // element the first time, we have to descend again and repeat the
+        // search on the subgraph to update the edge weights of all paths
+        // therein.
+        PathCache &cache = descendant_it->second;
+        if (cost_so_far <= cache.arrival_cost) {
+          if (cache.paths.empty()) {
+            continue;
+          }
 
+          for (Path *longest_descendant : cache.paths) {
+            Path *final_path = new Path(path);
+            final_path->Append(*longest_descendant);
+
+            if (sample) std::cout << "skipping because cached descendant ("
+                                  << current->name << "): "
+                                  << final_path->AsString() << std::endl;
+
+            // Update edge weights.
+            bool defer_delete = false;
+            UpdateEdgeWeightsForPath(final_path,
+                                     &critical_paths,
+                                     &critical_path_by_edge,
+                                     &defer_delete);
+            if (!defer_delete) {
+              delete final_path;
+            }
+          }
+          // We're done with this edge now; move on.
           continue;
+        } else {
+          std::cout << "arrived at " << current->name << " with higher cost "
+                    << cost_so_far << " (vs. old " << cache.arrival_cost << ")"
+                    << std::endl;
         }
-
-        Path *final_path = new Path(path);
-        final_path->Append(*longest_descendant);
-
-        // Update edge weights.
-        bool defer_delete = false;
-        UpdateEdgeWeightsForPath(final_path,
-                                 &critical_paths,
-                                 &critical_path_by_edge,
-                                 &defer_delete);
-        if (sample) std::cout << "skipping because cached descendant ("
-                              << current->name << "): "
-                              << final_path->AsString() << std::endl;
-        if (!defer_delete) {
-          delete final_path;
-        }
-
-        // We're done with this edge now; move on.
-        continue;
       }
 
       // False if this edge leads to new search paths. If true, the edge leads to
@@ -441,20 +471,20 @@ void Graph::WeightCombinatorialPaths() {
       bool current_edge_is_terminal = true;
 
       double vertex_max_cost = -1.0;
-      Vertex *max_cost_vertex = nullptr;
-      // If this is non-null, it indicates that the current edge is terminal
-      // because the max_cost_vertex has known descendants. Then it points to the
-      // longest path of which max_cost_vertex is the root.
-      Path *max_cost_vertex_path = nullptr;
+      // If this is non-empty, it indicates that the current edge is terminal
+      // because at least one of the max_cost_vertices has known descendants.
+      // Then it points to the longest path of which max_cost_vertex is the
+      // root.
+      std::map<Vertex*, Path*> max_cost_vertices;
 
       for (Vertex *next_vertex : current->out) {
         // Paths end at flip-flops and latches and such.
         if (next_vertex->IsSynchronous()) {
-          if (next_vertex->Cost() > vertex_max_cost) {
-            max_cost_vertex_path = nullptr;
-            max_cost_vertex = next_vertex;
-            vertex_max_cost = next_vertex->Cost();
-          }
+          UpdateMaxCost(next_vertex->Cost(),
+                        next_vertex,
+                        nullptr,
+                        &vertex_max_cost,
+                        &max_cost_vertices);
 
           bool defer_delete = false;
           Path *final_path = new Path(path);
@@ -486,33 +516,44 @@ void Graph::WeightCombinatorialPaths() {
         }
 
         // If the cost of the subgraph below this vertex is already known, use
-        // it.
+        // it - unless the cost to get here _exceeds_ that used to get here
+        // last time. In that case we have to research the subgraph to update
+        // its edge weights.
         auto descendant_by_vertex_it = descendant_by_vertex.find(next_vertex);
         if (descendant_by_vertex_it != descendant_by_vertex.end()) {
-          Path *terminal_path = descendant_by_vertex_it->second;
+          PathCache &cache = descendant_by_vertex_it->second;
 
-          if (terminal_path->Cost() > vertex_max_cost) {
-            max_cost_vertex_path = terminal_path;
-            max_cost_vertex = next_vertex;
-            vertex_max_cost = terminal_path->Cost();
+          if (cost_so_far <= cache.arrival_cost) {
+            for (Path *terminal_path : cache.paths) {
+              UpdateMaxCost(terminal_path->Cost(),
+                            next_vertex,
+                            terminal_path,
+                            &vertex_max_cost,
+                            &max_cost_vertices);
+
+              Path *final_path = new Path(path);
+              final_path->Append(*terminal_path);
+
+              if (sample) std::cout << "skipping because cached descendant ("
+                                    << next_vertex->name() << "): "
+                                    << final_path->AsString() << std::endl;
+
+              bool defer_delete = false;
+              ++num_found;
+              UpdateEdgeWeightsForPath(final_path,
+                                       &critical_paths,
+                                       &critical_path_by_edge,
+                                       &defer_delete);
+              if (!defer_delete) {
+                delete final_path;
+              }
+            }
+            continue;
+          } else {
+            std::cout << "arrived at " << next_vertex->name() << " with higher cost "
+                      << cost_so_far << " (vs. old " << cache.arrival_cost << ")"
+                      << std::endl;
           }
-
-          Path *final_path = new Path(path);
-          final_path->Append(*terminal_path);
-
-          bool defer_delete = false;
-          ++num_found;
-          UpdateEdgeWeightsForPath(final_path,
-                                   &critical_paths,
-                                   &critical_path_by_edge,
-                                   &defer_delete);
-          if (sample) std::cout << "skipping because cached descendant ("
-                                << next_vertex->name() << "): "
-                                << final_path->AsString() << std::endl;
-          if (!defer_delete) {
-            delete final_path;
-          }
-          continue;
         }
 
         // Ignore combinational loops.
@@ -523,11 +564,11 @@ void Graph::WeightCombinatorialPaths() {
           continue;
         }
 
-        if (next_vertex->Cost() > vertex_max_cost) {
-          max_cost_vertex_path = nullptr;
-          max_cost_vertex = next_vertex;
-          vertex_max_cost = next_vertex->Cost();
-        }
+        UpdateMaxCost(next_vertex->Cost(),
+                      next_vertex,
+                      nullptr,
+                      &vertex_max_cost,
+                      &max_cost_vertices);
 
         // If the path-so-far isn't ending, extend a copy of the path with
         // the next edge to follow.
@@ -536,8 +577,7 @@ void Graph::WeightCombinatorialPaths() {
         // child edges are terminal.
         bool next_vertex_is_terminal = true;
         double edge_max_cost = -1.0;
-        Path *max_cost_edge_path = nullptr;
-        Edge *max_cost_edge = nullptr;
+        std::map<Edge*, Path*> max_cost_edges;
         for (Edge *next_edge : next_vertex->out()) {
           descendant_it = descendant_by_edge.find(next_edge);
           if (descendant_it == descendant_by_edge.end()) {
@@ -546,17 +586,19 @@ void Graph::WeightCombinatorialPaths() {
                         << " is not terminal because " << next_edge->name
                         << " is not" << std::endl;
             next_vertex_is_terminal = false;
-          } else if (descendant_it->second == nullptr) {
+          } else if (descendant_it->second.paths.empty()) {
             // This edge is known to go nowhere. Skip it. Vertices leading to
             // this edge are still terminal but we can't account for it or use
             // it to seed more search paths.
             continue;
           } else {
-            Path *descendant_path = descendant_it->second;
-            if (descendant_path->Cost() > edge_max_cost) {
-              max_cost_edge_path = descendant_path;
-              max_cost_edge = next_edge;
-              edge_max_cost = descendant_path->Cost();
+            PathCache &cache = descendant_it->second;
+            for (Path *descendant_path : cache.paths) {
+              UpdateMaxCost(descendant_path->Cost(),
+                            next_edge,
+                            descendant_path,
+                            &edge_max_cost,
+                            &max_cost_edges);
             }
             // The next_edge is not skipped even if the descendant path is
             // known because that will happen on the next iteration of the
@@ -574,16 +616,35 @@ void Graph::WeightCombinatorialPaths() {
           to_visit.push_back(std::make_pair(next_edge, new_path));
         }
 
-        if (next_vertex_is_terminal && max_cost_edge_path != nullptr) {
-          assert(max_cost_edge != nullptr);
-          Path *terminal_path = new Path({next_vertex, max_cost_edge});
-          terminal_path->Append(*max_cost_edge_path);
-          descendant_by_vertex[next_vertex] = terminal_path;
-          if (terminal_path->Cost() > vertex_max_cost) {
-            max_cost_vertex_path = terminal_path;
-            max_cost_vertex = next_vertex;
-            vertex_max_cost = terminal_path->Cost();
+        if (next_vertex_is_terminal && !max_cost_edges.empty()) {
+          PathCache cache = {cost_so_far, {}};
+          for (auto &pair : max_cost_edges) {
+            Edge *max_cost_edge = pair.first;
+            Path *max_cost_edge_path = pair.second;
+            Path *terminal_path = new Path({next_vertex, max_cost_edge});
+            terminal_path->Append(*max_cost_edge_path);
+            cache.paths.insert(terminal_path);
+
+            UpdateMaxCost(terminal_path->Cost(),
+                          next_vertex,
+                          terminal_path,
+                          &vertex_max_cost,
+                          &max_cost_vertices);
           }
+
+          // Before we replace the PathCache, we have to check if there's an
+          // existing one and delete its paths.
+          auto descendant_it = descendant_by_vertex.find(next_vertex);
+          if (descendant_it != descendant_by_vertex.end()) {
+            PathCache &cache = descendant_it->second;
+            if (cache.arrival_cost > cost_so_far)
+              std::cout << "VERTEX FUCK" << std::endl;
+            for (Path *path : cache.paths) delete path;
+            descendant_by_vertex.erase(descendant_it);
+            std::cout << "replaced cache for " << next_vertex->name() << std::endl;
+          }
+
+          descendant_by_vertex.insert({next_vertex, cache});
         }
 
         if (!next_vertex_is_terminal) {
@@ -596,18 +657,35 @@ void Graph::WeightCombinatorialPaths() {
       if (current_edge_is_terminal) {
         // None of the vertices out of this edge led to new search paths, so it's
         // 'terminal'. Record the longest descendant. At this point we need to
-        // find the highest-cost final node and use that as the terminal node.
-        Path *terminal_path = nullptr;
-        if (max_cost_vertex != nullptr) {
+        // find the highest-cost final nodes and use those as the terminal nodes.
+        PathCache edge_cache = {cost_so_far, {}};
+        if (!max_cost_vertices.empty()) {
           assert(!current->out.empty());
-          terminal_path = max_cost_vertex_path == nullptr ?
-              new Path(std::pair<Vertex*, Edge*>{max_cost_vertex, nullptr}) :
-              new Path(*max_cost_vertex_path);
+          for (const auto pair : max_cost_vertices) {
+            Vertex *max_cost_vertex = pair.first;
+            Path *max_cost_vertex_path = pair.second;
+            // A nullptr entry means that the edge leads nowhere. Otherwise, the
+            // longest descendant path is recorded.
+            Path *terminal_path = max_cost_vertex_path == nullptr ?
+                new Path(std::pair<Vertex*, Edge*>{max_cost_vertex, nullptr}) :
+                new Path(*max_cost_vertex_path);
+            edge_cache.paths.insert(terminal_path);
+          }
         }
 
-        // A nullptr entry means that the edge leads nowhere. Otherwise, the
-        // longest descendant path is recorded.
-        descendant_by_edge[current] = terminal_path;
+        // Before we replace the PathCache, we have to check if there's an
+        // existing one and delete its paths.
+        auto descendant_it = descendant_by_edge.find(current);
+        if (descendant_it != descendant_by_edge.end()) {
+          PathCache &cache = descendant_it->second;
+          if (cache.arrival_cost > cost_so_far)
+            std::cout << "FUCK" << std::endl;
+          for (Path *path : cache.paths) delete path;
+          descendant_by_edge.erase(descendant_it);
+          std::cout << "replaced cache for " << current->name << std::endl;
+        }
+
+        descendant_by_edge.insert({current, edge_cache});
       }
 
       // The path shared_ptr should now leave scope and continue on its journey
@@ -617,39 +695,39 @@ void Graph::WeightCombinatorialPaths() {
 
   std::cout << "Found " << num_found << " paths" << std::endl;
 
-  auto trace_edge_it = edges_by_name_.find(FLAGS_trace);
-  Edge *trace_edge = nullptr;
-  if (trace_edge_it != edges_by_name_.end()) {
-    trace_edge = trace_edge_it->second;
-    auto trace_descendant_it = descendant_by_edge.find(trace_edge);
-    if (trace_descendant_it != descendant_by_edge.end()) {
-      Path *desc = trace_descendant_it->second;
-      std::cout << "longest descendant c=" << desc->Cost() << " for "
-                << trace_edge->name << " is " << desc->AsString()
-                << std::endl;
-    } else {
-      std::cout << "no descendant for " << FLAGS_trace << " found" << std::endl;
-    }
-  } else {
-    std::cout << "no edge for " << FLAGS_trace << " found" << std::endl;
-  }
+  // auto trace_edge_it = edges_by_name_.find(FLAGS_trace);
+  // Edge *trace_edge = nullptr;
+  // if (trace_edge_it != edges_by_name_.end()) {
+  //   trace_edge = trace_edge_it->second;
+  //   auto trace_descendant_it = descendant_by_edge.find(trace_edge);
+  //   if (trace_descendant_it != descendant_by_edge.end()) {
+  //     Path *desc = trace_descendant_it->second;
+  //     std::cout << "longest descendant c=" << desc->Cost() << " for "
+  //               << trace_edge->name << " is " << desc->AsString()
+  //               << std::endl;
+  //   } else {
+  //     std::cout << "no descendant for " << FLAGS_trace << " found" << std::endl;
+  //   }
+  // } else {
+  //   std::cout << "no edge for " << FLAGS_trace << " found" << std::endl;
+  // }
 
-  auto trace_vertex_it = vertices_by_name_.find(FLAGS_trace);
-  Vertex *trace_vertex = nullptr;
-  if (trace_vertex_it != vertices_by_name_.end()) {
-    trace_vertex = trace_vertex_it->second;
-    auto trace_descendant_it = descendant_by_vertex.find(trace_vertex);
-    if (trace_descendant_it != descendant_by_vertex.end()) {
-      Path *desc = trace_descendant_it->second;
-      std::cout << "longest descendant c=" << desc->Cost() << " for "
-                << trace_vertex->name() << " is " << desc->AsString()
-                << std::endl;
-    } else {
-      std::cout << "no descendant for " << FLAGS_trace << " found" << std::endl;
-    }
-  } else {
-    std::cout << "no vertex for " << FLAGS_trace << " found" << std::endl;
-  }
+  // auto trace_vertex_it = vertices_by_name_.find(FLAGS_trace);
+  // Vertex *trace_vertex = nullptr;
+  // if (trace_vertex_it != vertices_by_name_.end()) {
+  //   trace_vertex = trace_vertex_it->second;
+  //   auto trace_descendant_it = descendant_by_vertex.find(trace_vertex);
+  //   if (trace_descendant_it != descendant_by_vertex.end()) {
+  //     Path *desc = trace_descendant_it->second;
+  //     std::cout << "longest descendant c=" << desc->Cost() << " for "
+  //               << trace_vertex->name() << " is " << desc->AsString()
+  //               << std::endl;
+  //   } else {
+  //     std::cout << "no descendant for " << FLAGS_trace << " found" << std::endl;
+  //   }
+  // } else {
+  //   std::cout << "no vertex for " << FLAGS_trace << " found" << std::endl;
+  // }
 
   if (FLAGS_show_edge_longest_paths) {
     std::cout << "Critical paths by edge: " << std::endl;
@@ -664,16 +742,26 @@ void Graph::WeightCombinatorialPaths() {
       std::cout << path->AsString() << std::endl;
     }
     std::cout << std::endl << "Descendant paths by edge: " << std::endl;
-    for (const auto &pair : descendant_by_edge) {
-      if (pair.second == nullptr) continue;
-      std::cout << "(" << pair.first->name << " c: " << pair.second->Cost() << ") "
-                << pair.second->AsString() << std::endl;
+    for (auto &pair : descendant_by_edge) {
+      Edge *edge = pair.first;
+      PathCache &cache = pair.second;
+      std::cout << "(" << edge->name
+                << " arrival cost: " << cache.arrival_cost
+                << " #d: " << cache.paths.size() << ") " << std::endl;
+      for (Path *path : cache.paths)
+        std::cout << "\tc: " << path->Cost() << " " << path->AsString()
+                  << std::endl;
     }
     std::cout << std::endl << "Descendant paths by vertex: " << std::endl;
-    for (const auto &pair : descendant_by_vertex) {
-      if (pair.second == nullptr) continue;
-      std::cout << "(" << pair.first->name() << " c: " << pair.second->Cost() << ") "
-                << pair.second->AsString() << std::endl;
+    for (auto &pair : descendant_by_vertex) {
+      Vertex *vertex = pair.first;
+      PathCache &cache = pair.second;
+      std::cout << "(" << vertex->name()
+                << " arrival cost: " << cache.arrival_cost
+                << " #d: " << cache.paths.size() << ") " << std::endl;
+      for (Path *path : cache.paths)
+        std::cout << "\tc: " << path->Cost() << " " << path->AsString()
+                  << std::endl;
     }
   }
 
@@ -681,10 +769,12 @@ void Graph::WeightCombinatorialPaths() {
     delete path;
 
   for (const auto &pair : descendant_by_edge)
-    delete pair.second;
+    for (Path *path : pair.second.paths)
+      delete path;
 
   for (const auto &pair : descendant_by_vertex)
-    delete pair.second;
+    for (Path *path : pair.second.paths)
+      delete path;
 }
 
 void Graph::AddInputEdges(

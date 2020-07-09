@@ -101,6 +101,21 @@ class Graph {
   std::vector<Vertex*> instances_;
 };
 
+template <typename T>
+void UpdateMaxCost(const double &new_cost,
+                   T *max_cost_object,
+                   Path *max_cost_path,
+                   double *max_cost,
+                   std::map<T*, Path*> *max_cost_objects) {
+  if (new_cost > *max_cost) {
+    max_cost_objects->clear();
+    max_cost_objects->insert({max_cost_object, max_cost_path});
+    *max_cost = new_cost;
+  } else if (new_cost == *max_cost) {
+    // max_cost_path might be nullptr!
+    max_cost_objects->insert({max_cost_object, max_cost_path});
+  }
+}
 
 } // namespace jsondotrulo
 
