@@ -457,7 +457,7 @@ void Graph::WeightCombinatorialPaths() {
           }
           // We're done with this edge now; move on.
           continue;
-        } else {
+        } else if (sample) {
           std::cout << "arrived at " << current->name << " with higher cost "
                     << cost_so_far << " (vs. old " << cache.arrival_cost << ")"
                     << std::endl;
@@ -549,7 +549,7 @@ void Graph::WeightCombinatorialPaths() {
               }
             }
             continue;
-          } else {
+          } else if (sample) {
             std::cout << "arrived at " << next_vertex->name() << " with higher cost "
                       << cost_so_far << " (vs. old " << cache.arrival_cost << ")"
                       << std::endl;
@@ -694,40 +694,6 @@ void Graph::WeightCombinatorialPaths() {
   }
 
   std::cout << "Found " << num_found << " paths" << std::endl;
-
-  // auto trace_edge_it = edges_by_name_.find(FLAGS_trace);
-  // Edge *trace_edge = nullptr;
-  // if (trace_edge_it != edges_by_name_.end()) {
-  //   trace_edge = trace_edge_it->second;
-  //   auto trace_descendant_it = descendant_by_edge.find(trace_edge);
-  //   if (trace_descendant_it != descendant_by_edge.end()) {
-  //     Path *desc = trace_descendant_it->second;
-  //     std::cout << "longest descendant c=" << desc->Cost() << " for "
-  //               << trace_edge->name << " is " << desc->AsString()
-  //               << std::endl;
-  //   } else {
-  //     std::cout << "no descendant for " << FLAGS_trace << " found" << std::endl;
-  //   }
-  // } else {
-  //   std::cout << "no edge for " << FLAGS_trace << " found" << std::endl;
-  // }
-
-  // auto trace_vertex_it = vertices_by_name_.find(FLAGS_trace);
-  // Vertex *trace_vertex = nullptr;
-  // if (trace_vertex_it != vertices_by_name_.end()) {
-  //   trace_vertex = trace_vertex_it->second;
-  //   auto trace_descendant_it = descendant_by_vertex.find(trace_vertex);
-  //   if (trace_descendant_it != descendant_by_vertex.end()) {
-  //     Path *desc = trace_descendant_it->second;
-  //     std::cout << "longest descendant c=" << desc->Cost() << " for "
-  //               << trace_vertex->name() << " is " << desc->AsString()
-  //               << std::endl;
-  //   } else {
-  //     std::cout << "no descendant for " << FLAGS_trace << " found" << std::endl;
-  //   }
-  // } else {
-  //   std::cout << "no vertex for " << FLAGS_trace << " found" << std::endl;
-  // }
 
   if (FLAGS_show_edge_longest_paths) {
     std::cout << "Critical paths by edge: " << std::endl;
